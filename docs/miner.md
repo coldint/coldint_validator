@@ -1,16 +1,20 @@
 # Miner
+Miners are rewarded for improving the model that is currently the object of research.
+
+The base miner provided by subnet 9 (Pretrain) has been left in the code-base, but should be seen as starting point only.
+It is unlikely it will produce much improved models. We plan on releasing a more powerful training tool in the coming months.
 
 Miners train locally and periodically publish their best model to hugging face and commit the metadata for that model to the Bittensor chain.
 
-Miners can only have one model associated with them on the chain for evaluation by validators at a time. The list of allowed model types by block can be found in [constants/__init__.py](https://github.com/macrocosm-os/pretraining/blob/main/constants/__init__.py#L57). Other relevant constraints are also listed in that file.
+Miners can only have one model associated with them on the chain for evaluation by validators at a time. The list of allowed model types by block can be found in [constants/\_\_init\_\_.py](../constants/__init__.py).
 
 The communication between a miner and a validator happens asynchronously chain and therefore Miners do not need to be running continuously. Validators will use whichever metadata was most recently published by the miner to know which model to download from hugging face.
 
 # System Requirements
 
-Miners will need enough disk space to store their model as they work on. Max size of model is defined in [constants/__init__.py](https://github.com/macrocosm-os/pretraining/blob/main/constants/__init__.py#L57). It is recommended to have at least 50 GB of disk space.
+Miners will need enough disk space to store the model they work on. Max size of model is defined in [constants/\_\_init\_\_.py](../constants/__init__.py), but is typically 15GB. It is recommended to have at least 100 GB of disk space.
 
-Miners will need enough processing power to train their model. The device the model is trained on is recommended to be a large GPU with atleast 20 GB of VRAM.
+Miners will need enough processing power to train their model. The current models have around 7B parameters. To train such a model a single large GPU (80 GB) is required, or multiple 48GB or 24GB GPUs.
 
 # Getting started
 
@@ -44,30 +48,19 @@ pip install torch
 ```
 
 5. Make sure you've [created a Wallet](https://docs.bittensor.com/getting-started/wallets) and [registered a hotkey](https://docs.bittensor.com/subnets/register-and-participate).
-
-6. (Optional) Run a Subtensor instance:
-
-Your node will run better if you are connecting to a local Bittensor chain entrypoint node rather than using Opentensor's. 
-We recommend running a local node as follows and passing the ```--subtensor.network local``` flag to your running miners/validators. 
-To install and run a local subtensor node follow the commands below with Docker and Docker-Compose previously installed.
-```bash
-git clone https://github.com/opentensor/subtensor.git
-cd subtensor
-docker compose up --detach
-```
 ---
 
 # Running the Miner
 
 The mining script uploads a model to hugging face which will be evaluated by validators.
 
-See [Validator Psuedocode](docs/validator.md#validator) for more information on how they the evaluation occurs.
+To evaluate your training results the recommended approach is to install the validator and run it with your models injected using the file `benchmark.json`. This allows you to see what would happen in a validator after publishing your model. It also gives valuable insights into how other models are performing.
 
 ## Env File
 
 The Miner requires a .env file with your hugging face access token in order to upload models.
 
-Create a `.env` file in the `pretraining` directory and add the following to it:
+Create a `.env` file in the `coldint\_validator` directory and add the following to it:
 ```shell
 HF_ACCESS_TOKEN="YOUR_HF_ACCESS_TOKEN"
 ```
@@ -77,17 +70,12 @@ HF_ACCESS_TOKEN="YOUR_HF_ACCESS_TOKEN"
 To start your miner the most basic command is
 
 ```shell
-python neurons/miner.py --wallet.name coldkey --wallet.hotkey hotkey --hf_repo_id my-username/my-project --avg_loss_upload_threshold YOUR_THRESHOLD
+python neurons/miner.py --wallet.name coldkey --wallet.hotkey hotkey
 ```
 
 - `--wallet.name`: should be the name of the coldkey that contains the hotkey your miner is registered with.
 
 - `--wallet.hotkey`: should be the name of the hotkey that your miner is registered with.
-
-- `--hf_repo_id`: should be the namespace/model_name that matches the hugging face repo you want to upload to. Must be public so that the validators can download from it.
-
-- `--avg_loss_upload_threshold`: should be the minimum average loss before you want your miner to upload the model.
-
 
 ### Flags
 
@@ -112,7 +100,6 @@ Some flags you may find useful:
 - `--load_uid`: when passing a uid you will download and train the model from the matching miner on the network.
 - `--load_model_dir`: the path to a local model directory [saved via Hugging Face API].
 - `--load_model`: the path to a safetensors file [not necessarily saved from Hugging Face API].
-- `--upload_b16`: if the model should be uploaded with bfloat16.
 
 ---
 
@@ -120,46 +107,15 @@ Some flags you may find useful:
 
 In some cases you may have failed to upload a model or wish to upload a model without further training.
 
-Due to rate limiting by the Bittensor chain you may only upload a model every 20 minutes.
+Due to rate limiting by the Bittensor chain you may only upload a model every 360 blocks (20 minutes).
 
 You can manually upload with the following command:
 ```shell
 python scripts/upload_model.py --load_model_dir <path to model> --hf_repo_id my-username/my-project --wallet.name coldkey --wallet.hotkey hotkey
 ```
 
-Note: By default this will upload using bfloat16 (unlike the miner). You can pass ``--no-upload-b16`` to instead upload with fp32.
+## Running a custom miner
 
-## Running a custom Miner
+The list of allowed model types can be found in [constants/\_\_init\_\_.py](../constants/__init__.py)
 
-The list of allowed model types by block can be found in [constants/__init__.py](https://github.com/macrocosm-os/pretraining/blob/main/constants/__init__.py#L57)
-
-In that file are also the constraints per block for
-1. Total number of parameters.
-2. Total size of the repo.
-3. sequence_length parameter requierments.
-4. Support for flash attention and bfloat16 requirements.
-
-The `pretain/mining.py` file has several methods that you may find useful. Example below.
-
-```python
-import pretrain as pt
-import bittensor as bt
-from transformers import PreTrainedModel
-
-# Load a model from another miner.
-model: PreTrainedModel = await pt.mining.load_remote_model(uid=123, download_dir="mydir")
-
-# Save the model to local file.
-pt.mining.save(model, "model-foo/")
-
-# Load the model from disk.
-pt.mining.load_local_model("model-foo/", use_bf16=True)
-
-# Publish the model for validator evaluation.
-wallet = bt.wallet()
-await pt.mining.push(model, repo="jdoe/my-repo", wallet=wallet)
-
-# Get the URL to the best model
-best_uid = pt.graph.best_uid()
-print(await pt.mining.get_repo(best_uid))
-```
+In that file are also the constraints for the total number of parameters and the total size of the model.
