@@ -33,8 +33,8 @@ class SubsetFineWebEdu2Loader(IterableDataset):
     rows_base_url: str = "https://datasets-server.huggingface.co/rows"
     size_base_url: str = "https://datasets-server.huggingface.co/size"
 
-    retry_limit: int = 10  # Number of retries
-    retry_delay: int = 5  # Seconds to wait between retries
+    retry_limit: int = 2  # Number of retries
+    retry_delay: int = 3  # Seconds to wait between retries
     
     def __init__(
         self,
@@ -42,199 +42,122 @@ class SubsetFineWebEdu2Loader(IterableDataset):
         sequence_length=None,
         num_pages=None,
         tokenizer: AutoTokenizer=None,
+        pack=True,
     ):
         self.batch_size = batch_size
         self.sequence_length = sequence_length
-        self.num_pages = num_pages
         self.num_rows_per_page = 100
         self.tokenizer = tokenizer
-
-        self.buffer = []
+        self.pack = pack
 
         # Get the dataset configs and their row sizes
         self.configs_data = self.fetch_dataset_configs()
 
-        # We first need to fetch the data and fill the loader buffer.
-        # Since some sample files are broken, we first try to find `num_pages`
-        # responsive samples, then we add them to the found pages `self.pages`
-        if self.num_pages:
-            self._fetch_data_to_buffer(self.num_pages)
-
-            
-    def _fetch_data_to_buffer(self, num_pages):
-        """
-        Randomly sample pages and add their data to the buffer.
-        If a page is inaccessible, another one is sampled.
-        this method sets the `pages` property
-        """
-        
         self.pages = []
-        attempts = 0
-        
-        while len(self.pages) < num_pages:
-
-            # randomly sample one page
-            config_name, page, split = self.get_random_pages(num_pages = 1)[0]
-            
-            # Create the request parameters
-            params = dict(dataset=self.name,
-                          config=config_name,
-                          split=split,
-                          offset=page,
-                          limit=self.num_rows_per_page
-            )
-
-            try:
-                response = requests.get(self.rows_base_url, params=params)
-
-                response.raise_for_status()  # This will raise an HTTPError if the HTTP request returned an unsuccessful status code
-
-                # Add the page since the request was successful
-                self.pages.append((config_name, page, split))
-                
-                for row in response.json()["rows"]:
-                    content = row["row"]["text"]
-                    self.buffer += self.tokenizer(content, truncation=True)["input_ids"]
-                    self.buffer += [self.tokenizer.eos_token_id]
-
-            except requests.exceptions.RequestException as e:
-                attempts += 1
-                bt.logging.warning(
-                    f"Failed to fetch data, retrying with a newly sampled page. Attempt {attempts}/{self.retry_limit * num_pages}"
-                )
-                if attempts < num_pages * self.retry_limit:
-                    pass
-
-                else:
-                    bt.logging.error(
-                        "Maximum retry limit reached. Unable to fetch data."
-                    )
-                    raise
-
-    def fetch_data_for_pages(self, pages):
-        """
-        Set the pages to be used to fill the buffer. Then fetch the page data
-        to the buffer.
-        """
-
-        self.pages = pages
-        
-        # Empty the buffer if it is not.
         self.buffer = []
+        if num_pages:
+            self.fetch_random_pages(num_pages)
 
-        for page in self.pages:
-            self._fetch_data_for_page(page)
+    def fetch_page(self, page_info, pack=None, tokenize=True):
+        """
+        Fetch a single page; return True when successful.
+        If successful, rows have been appended to self.buffer and page appended to self.pages
+        Tokenize samples if tokenize==True
+        Pack samples (i.e. concatenate) if pack==True
+        """
+        if pack is None:
+            pack = self.pack
 
-    def _fetch_data_for_page(self, page):
-
-        retry_limit = 10
-        
         attempt = 0
-        while attempt < retry_limit:
-            config_name, page, split = page
-
+        config_name, page, split = page_info
+        bt.logging.info(f"Fetching page {page_info}")
+        while attempt < self.retry_limit:
             # Create the request parameters
             params = dict(dataset=self.name,
-                          config=config_name,
-                          split=split,
-                          offset=page,
-                          limit=self.num_rows_per_page
+                  config=config_name,
+                  split=split,
+                  offset=page,
+                  limit=self.num_rows_per_page
             )
             
             try:
-
                 response = requests.get(self.rows_base_url, params=params)
-
+                try:
+                    response_json = response.json()
+                except:
+                    response_json = "Invalid JSON"
                 response.raise_for_status()  # This will raise an HTTPError if the HTTP request returned an unsuccessful status code
 
                 for row in response.json()["rows"]:
                     content = row["row"]["text"]
-                    self.buffer += self.tokenizer(content, truncation=True)["input_ids"]
-                    self.buffer += [self.tokenizer.eos_token_id]
-                    
-                break  # If the request was successful, break out of the retry loop
+                    if tokenize:
+                        tokenized = self.tokenizer(content, truncation=True)["input_ids"] + [self.tokenizer.eos_token_id]
+                    else:
+                        # For fetch_data_to_rows
+                        tokenized = content
+
+                    if self.pack:
+                        self.buffer.extend(tokenized)
+                    else:
+                        self.buffer.append(tokenized)
+                self.pages.append(page_info)
+                return True
             
             except requests.exceptions.RequestException as e:
                 attempt += 1
                 bt.logging.warning(
-                    f"Failed to fetch data for page {page}, retrying. Attempt {attempt}/{self.retry_limit}"
+                    f"Failed to fetch {page_info}: {e}, {response_json}, retrying ({attempt}/{self.retry_limit})"
                 )
                 if attempt < self.retry_limit:
                     time.sleep(self.retry_delay)  # Wait before the next retry
                 else:
-                    bt.logging.error(
-                        "Maximum retry limit reached. Unable to fetch data."
-                    )
-                    raise
-                
-    def fetch_data_to_rows(self, num_pages):
+                    bt.logging.error(f"Maximum retry limit reached. Unable to fetch {page_info}")
+                    return False
 
-        rows = []
-        attempts = 0
-        num_downloaded_pages = 0
-        
-        while num_downloaded_pages < num_pages:
-
-            # randomly sample one page
-            config_name, page, split = self.get_random_pages(num_pages = 1)[0]
-            
-            # Create the request parameters
-            params = dict(dataset=self.name,
-                          config=config_name,
-                          split=split,
-                          offset=page,
-                          limit=self.num_rows_per_page
-            )
-
-            try:
-                response = requests.get(self.rows_base_url, params=params)
-
-                response.raise_for_status()  # This will raise an HTTPError if the HTTP request returned an unsuccessful status code
-
-                num_downloaded_pages += 1
-                
-                for row in response.json()["rows"]:
-                    rows.append(row["row"]["text"])
-
-            except requests.exceptions.RequestException as e:
-                attempts += 1
-                bt.logging.warning(
-                    f"Failed to fetch data, retrying with a newly sampled page. Attempt {attempts}/{self.retry_limit * num_pages}"
-                )
-                if attempts < num_pages * self.retry_limit:
-                    pass
-
-                else:
-                    bt.logging.error(
-                        "Maximum retry limit reached. Unable to fetch data."
-                    )
-                    raise
-
-                
-        return rows
-    
     def get_random_pages(self, num_pages):
-        """
-        Randomly sample one page.
-        A page is a row number of a given split of a given dataset dump.
-        """
+        '''
+        Pick <num_pages> random pages, return list of (config_name, page, split) tuples
+        '''
         pages = []
-        
         for _ in range(num_pages):
-            
             # Choose a random config
             config_name = random.choice(list(self.configs_data.keys()))
-
             # Choose a random page (row)
-            page = random.randint(0,
-                                  self.configs_data[config_name]['num_rows'] - 1 - self.num_rows_per_page)
-
+            page_info = random.randint(0, self.configs_data[config_name]['num_rows'] - 1 - self.num_rows_per_page)
             split = self.configs_data[config_name]['split']
-
-            pages.append((config_name, page, split))
-
+            pages.append((config_name, page_info, split))
         return pages
-        
+
+    def fetch_data_for_pages(self, pages):
+        '''
+        Clear self.buffer/self.pages and fill with pages
+        '''
+        self.pages = []
+        self.buffer = []
+        for page_info in pages:
+            self.fetch_page(page_info)
+
+    def fetch_random_pages(self, num_pages):
+        '''
+        Clear self.buffer/self.pages and fill with num_pages randomly selected pages
+        '''
+        self.pages = []
+        self.buffer = []
+        while len(self.pages) < num_pages:
+            page_info = self.get_random_pages(num_pages=1)[0]
+            self.fetch_page(page_info)
+
+    def fetch_data_to_rows(self, num_pages):
+        '''
+        Clear self.buffer/self.pages and fill with num_pages randomly selected pages
+        '''
+        self.pages = []
+        self.buffer = []
+        while len(self.pages) < num_pages:
+            page = self.get_random_pages(num_pages=1)[0]
+            self.fetch_page(page, pack=False, tokenize=False)
+        return self.buffer
+
     def fetch_dataset_configs(self) -> typing.Dict[str, typing.Dict]:
         """
         Fetch the different dump names, aka configs, aka samples, of the
@@ -243,9 +166,7 @@ class SubsetFineWebEdu2Loader(IterableDataset):
         a dict of the number of rows and the split as values.
         """
         # Request parameters
-        params = dict(
-            dataset = self.name
-            )
+        params = dict(dataset=self.name)
         
         attempt = 0
         while attempt < self.retry_limit:
@@ -258,38 +179,38 @@ class SubsetFineWebEdu2Loader(IterableDataset):
 
                 # Now create a dict with config names (except 'default') as
                 # keys, and the number of rows as values
-                configs_data = {entry['config']: {'num_rows': entry['num_rows'] ,
-                                                  'split': entry['split']}
-                                for entry in configs_dict
-                                if entry['config'] != 'default'
-                                }                
+                configs_data = {
+                    entry['config']: {
+                        'num_rows': entry['num_rows'],
+                        'split': entry['split']
+                    } for entry in configs_dict if entry['config'] != 'default'
+                }
 
                 return configs_data
                     
             except requests.exceptions.RequestException as e:
                 attempt += 1
                 bt.logging.warning(
-                    f"Failed to fetch dataset configs, retrying. Attempt {attempt}/{self.retry_limit}"
+                    f"Failed to fetch dataset configs: {e}, retrying. Attempt {attempt}/{self.retry_limit}"
                 )
                 if attempt < self.retry_limit:
                     time.sleep(self.retry_delay)  # Wait before the next retry
                 else:
-                    bt.logging.error(
-                        "Maximum retry limit reached. Unable to fetch data."
-                    )
+                    bt.logging.error("Maximum retry limit reached. Unable to fetch data.")
                     raise
-                
+
     def __iter__(self):
-        while len(self.buffer) >= self.sequence_length * self.batch_size:
-            batch = []
-            for _ in range(self.batch_size):
-                batch.append(torch.tensor(self.buffer[: self.sequence_length]))
-                self.buffer = self.buffer[self.sequence_length :]
-            yield torch.stack(batch)
+        return self
 
     def __next__(self):
+        if len(self.buffer) == 0:
+            raise StopIteration
         batch = []
-        for _ in range(self.batch_size):
-            batch.append(torch.tensor(self.buffer[: self.sequence_length]))
-            self.buffer = self.buffer[self.sequence_length :]
+        while len(batch) < self.batch_size and len(self.buffer):
+            if self.pack:
+                batch.append(torch.tensor(self.buffer[: self.sequence_length]))
+                self.buffer = self.buffer[self.sequence_length :]
+            else:
+                # TODO: samples might have to be padded, so now only batch_size == 1 works
+                batch.append(torch.tensor(self.buffer.pop(0)))
         return torch.stack(batch)
