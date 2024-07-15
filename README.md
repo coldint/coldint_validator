@@ -1,41 +1,40 @@
-<picture>
-    <source srcset="./assets/macrocosmos-white.png"  media="(prefers-color-scheme: dark)">
-    <source srcset="./assets/macrocosmos-black.png"  media="(prefers-color-scheme: light)">
-    <img src="macrocosmos-black.png">
-</picture>
-
 <div align="center">
 
-# **Bittensor Pretrain Subnet** <!-- omit in toc -->
+# **Bittensor COLaborative Destributed INcentivized Training (coldint) Subnet** <!-- omit in toc -->
 [![Discord Chat](https://img.shields.io/discord/308323056592486420.svg)](https://discord.gg/bittensor)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) 
 
 ---
 
-[Leaderboard](https://huggingface.co/spaces/macrocosm-os/pretraining-leaderboard) • [Discord](https://discord.gg/bittensor) • [Network](https://taostats.io/subnets/netuid-9/) • [Research](https://bittensor.com/whitepaper) 
+[coldint.io](https://coldint.io) • [Discord](https://discord.gg/bittensor) • [Network](https://x.taostats.io/subnet/29)
 </div>
 
 ---
 
+This subnet is born out of miner frustration on other subnets. Miners are incentivized, more than anyone else, to scrutinize the validator and the weighting logic, which can play a bigger role than the actual training that should form the core of the subnet.
+
+Once miners find flaws, however minor, in the validation logic, they are incentivized to optimize their mining efforts to maximize "exploiting" these flaws. The end result is that the subnet as a whole is not optimizing towards the stated goal - whatever it may be.
+
+Until now.
+
+SN29 attempts to add collaboration to the mix. Bittensor was already distributed, decentralized and incentivized, but it is hardly a collective effort when it comes to sharing knowledge and insights - while the largest real-world effects of Bittensor are perhaps mostly that: brainpower invested in making AI better, in whatever shape or form.
+
+See [coldint.io](https://coldint.io) for further detais.
+
+
+
 # Introduction
+Bittensor subnet 29 is focused on advancing collaborative, distributed model training and research, as well as sharing of innovative ideas regarding model structure, training and evaluation.
+It started as a fork of subnet 9 (pretraining), which was somewhat static and lacked the incentive to publish small advancements.
+See [Macrocosmos github](https://github.com/macrocosm-os/pretraining/releases/tag/v3.2.1) for the exact starting point.
 
 The following documentation assumes you are familiar with basic Bittensor concepts: Miners, Validators, and incentives. If you need a primer, please check out https://docs.bittensor.com/learn/bittensor-building-blocks.
 
-Bittensor subnet 9 rewards miners for producing pretrained Foundation-Models on the Falcon Refined Web dataset. It acts like a continuous benchmark whereby miners are rewarded for attaining the best losses on randomly sampled pages of Falcon given a consistent model architecture. The reward mechanism works as follows:
+The initial competition rewards miners for improving model score on the [Fineweb-edu-2 dataset](https://huggingface.co/datasets/HuggingFaceFW/fineweb-edu-score-2).
 
-    1. Miners train and periodically publish models to hugging face and commit the metadata for that model to the Bittensor chain.
-    2. Validators download the models from hugging face for each miner based on the Bittensor chain metadata and continuously evaluate them, setting weights based on the performance of each model against the Falcon dataset. They also log results to [wandb](https://wandb.ai/opentensor-dev/pretraining-subnet).
-    3. The Bittensor chain aggregates weights from all active validators using Yuma Consensus to determine the proportion of TAO emission rewarded to miners and validators. 
+Next to that, miner rewards can also be earned by contributing code, bug-fixes or key suggestions or insights; see [coldint.io](https://coldint.io) for further detais.
 
 See the [Miner](docs/miner.md) and [Validator](docs/validator.md) docs for more information about how they work, as well as setup instructions.
-
----
-
-## Incentive Mechanism
-
-Bittensor hosts multiple incentive mechanism through which miners are evaluated by validators for performing actions well. Validators perform the process of evaluation and 'set weights', which are transactions into Bittensor's blockchain. Each incentive mechanism in Bittensor is called a 'subnet' and has an identifier (This particular mechanism has subnet uid 9). Weights and the amount of TAO held by the validators become inputs to Bittensor's consensus mechanism called Yuma Consensus. YC drives validators towards a consensus, agreement about the value of the work done by miners. The miners with the highest agreed upon scores are minted TAO, the network digital currency.
-
-Miners within this subnet are evaluated based on the number of times the model they have hosted has a lower loss than another model on the network when randomly sampling from the near infinite Falcon Refined Web pretraining dataset. To perform well, miners must attain the lowest loss on the largest number of random batches. Finding the best model and delta at the earliest block ensures the most incentive.
 
 ---
 
@@ -45,7 +44,7 @@ TL;DR:
 1. [Chat](https://discord.gg/bittensor)
 2. [Leaderboard](https://huggingface.co/spaces/macrocosm-os/pretraining-leaderboard)
 
-This repo's main conversation is carried out in the Bittensor [Discord](https://discord.gg/bittensor). Visit the 'pretraining' channel to ask questions and get real time feedback. You can view the ongoing running of the incentive mechanism, the best miners (see 'incentive'), the most in consensus validators (see 'vtrust') using this [taostats link](https://taostats.io/subnets/netuid-9/). The table shows all 256 participant UIDs with corresponding YC stats and earnings. 
+This repo's main conversation is carried out in the Bittensor [Discord](https://discord.gg/bittensor). Visit the 'pretraining' channel to ask questions and get real time feedback. You can view the ongoing running of the incentive mechanism, the best miners (see 'incentive'), the most in consensus validators (see 'vtrust') using this [taostats link](https://taostats.io/subnets/netuid-29/). The table shows all 256 participant UIDs with corresponding YC stats and earnings.
 
 See [Miner Setup](docs/miner.md#getting-started) to learn how to set up a Miner.
 
