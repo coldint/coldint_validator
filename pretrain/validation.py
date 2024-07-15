@@ -24,62 +24,78 @@ import typing
 import constants
 import traceback
 import bittensor as bt
-
-
-def iswin(loss_i, loss_j, block_i, block_j) -> bool:
-    """
-    Determines the winner between two models based on the epsilon adjusted loss.
-
-    Parameters:
-        loss_i (float): Loss of uid i on batch
-        loss_j (float): Loss of uid j on batch.
-        block_i (int): Block of uid i.
-        block_j (int): Block of uid j.
-    Returns:
-        bool: True if loss i is better, False otherwise.
-    """
-    # Adjust loss based on timestamp and pretrain epsilon
-    loss_i = (1 - constants.timestamp_epsilon) * loss_i if block_i < block_j else loss_i
-    loss_j = (1 - constants.timestamp_epsilon) * loss_j if block_j < block_i else loss_j
-    return loss_i < loss_j
-
+import numpy as np
+import itertools
 
 def compute_wins(
-    uids: typing.List[int],
     losses_per_uid: typing.Dict[int, typing.List[float]],
-    batches: typing.List[torch.FloatTensor],
     uid_to_block: typing.Dict[int, int],
-) -> typing.Tuple[typing.Dict[int, int], typing.Dict[int, float]]:
+    current_block
+) -> typing.Dict[int, float]:
     """
-    Computes the wins and win rate for each model based on loss comparison.
+    Computes win fractions.
 
     Parameters:
-        uids (list): A list of uids to compare.
-        losses_per_uid (dict): A dictionary of losses for each uid by batch.
-        batches (List): A list of data batches.
+        losses_per_uid (dict): A dictionary of sample losses for each uid.
         uid_to_block (dict): A dictionary of blocks for each uid.
-
+        current_block (int): current block id
     Returns:
-        tuple: A tuple containing two dictionaries, one for wins and one for win rates.
+        dictionary: computed dictionaries uid->value
+                        wins
+                        win_fractions
+                        advantage_factors
+                        matrix {uid_a -> {uid_b -> info}}
     """
+    uids = list(losses_per_uid.keys())
+    if len(uids) == 0:
+        return {}
     wins = {uid: 0 for uid in uids}
-    win_rate = {uid: 0 for uid in uids}
-    for i, uid_i in enumerate(uids):
-        total_matches = 0
-        block_i = uid_to_block[uid_i]
-        for j, uid_j in enumerate(uids):
-            if i == j:
-                continue
-            block_j = uid_to_block[uid_j]
-            for batch_idx, _ in enumerate(batches):
-                loss_i = losses_per_uid[uid_i][batch_idx]
-                loss_j = losses_per_uid[uid_j][batch_idx]
-                wins[uid_i] += 1 if iswin(loss_i, loss_j, block_i, block_j) else 0
-                total_matches += 1
-        # Calculate win rate for uid i
-        win_rate[uid_i] = wins[uid_i] / total_matches if total_matches > 0 else 0
+    losses_per_uid = {uid: np.array(losses) for uid, losses in losses_per_uid.items()}
 
-    return wins, win_rate
+    # Sort UIDS by block and determine advantage factors
+    uids_sorted = sorted(uids, key=lambda x: uid_to_block.get(x))
+    uid_advantage_factors = {}
+    for uid in uids_sorted:
+        delta_blocks = current_block - uid_to_block[uid]
+        delta_epochs = delta_blocks / constants.blocks_per_epoch
+        if delta_epochs < 0 or math.isinf(delta_epochs):
+            # model from after current_block (through benchmark)
+            advantage_factor = 1
+        else:
+            # model from before current_block
+            advantage_decay = constants.advantage_decay_per_epoch**delta_epochs
+            advantage_factor = 1 - constants.advantage_initial * advantage_decay
+        uid_advantage_factors[uid] = advantage_factor
+
+    # For each sample, determine winner and award 1 point
+    n_samples = len(losses_per_uid[uids_sorted[0]])
+    for sample_idx in range(n_samples):
+        sample_loss = [losses_per_uid[uid][sample_idx] for uid in uids_sorted]
+
+        for i_uid_a, uid_a in enumerate(uids_sorted):
+            # uid_a should win from all other models using its advantage factor
+            uid_a_loss = sample_loss[i_uid_a] * uid_advantage_factors[uid_a]
+            won_all = True
+            for i_uid_b in range(i_uid_a+1,len(uids)):
+                if uid_a_loss > sample_loss[i_uid_b]:
+                    won_all = False
+                    break
+            if won_all:
+                wins[uid_a] += 1
+                break
+
+    win_fractions = {uid: n_wins / n_samples for uid,n_wins in wins.items()}
+
+    # Wins matrix (informative only)
+    matrix = {uid_a:{uid_b:None for uid_b in uids} for uid_a in uids}
+    for uid_a, uid_b in itertools.product(uids_sorted, uids_sorted):
+        matrix[uid_a][uid_b] = {
+            'loss': np.mean(losses_per_uid[uid_a] - losses_per_uid[uid_b]),
+            'wins': np.sum(losses_per_uid[uid_a] <= losses_per_uid[uid_b]),
+            'wins_adv': np.sum(uid_advantage_factors[uid_a] * losses_per_uid[uid_a] <= losses_per_uid[uid_b]),
+        }
+
+    return dict(wins=wins, win_rate=win_fractions, advantage_factors=uid_advantage_factors, matrix=matrix)
 
 
 def check_for_reasonable_output(
