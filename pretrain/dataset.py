@@ -234,20 +234,6 @@ class SubsetFineWebEdu2Loader(IterableDataset):
             pages.append((config_name, page, split))
 
         return pages
-
-    def get_page_names(self):
-        """
-        This is a utility function that returns the page names that were used.
-        Each page as a single string instead of a tuple
-        """
-
-        page_names = []
-        
-        if hasattr(self, 'pages'):
-            page_names = [f'{cfg_name}_{num_rows}_{split}' for
-                           cfg_name, num_rows, split in self.pages]
-            
-        return page_names
         
     def fetch_dataset_configs(self) -> typing.Dict[str, typing.Dict]:
         """
