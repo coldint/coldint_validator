@@ -20,6 +20,8 @@ import os
 import sys
 import time
 import torch
+import base64
+import hashlib
 from typing import Optional
 import constants
 from model.data import Model, ModelId
@@ -31,9 +33,15 @@ import bittensor as bt
 from transformers import PreTrainedModel, AutoModelForCausalLM
 import pretrain as pt
 from safetensors.torch import load_model
-
 from utilities import utils
-from model.utils import get_hash_of_two_strings
+
+
+def get_hash_of_two_strings(string1: str, string2: str) -> str:
+    """Hashes two strings together and returns the result."""
+
+    string_hash = hashlib.sha256((string1 + string2).encode())
+
+    return base64.b64encode(string_hash.digest()).decode("utf-8")
 
 
 def model_path(base_dir: str, run_id: str) -> str:
