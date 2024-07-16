@@ -27,10 +27,11 @@ import time
 import torch
 import random
 import asyncio
+import numpy as np
 
 import wandb
 import constants
-from model.data import TokenizerIdentifier
+from model.data import ModelId
 from model.model_tracker import ModelTracker
 from model.model_updater import ModelUpdater
 from model.storage.chain.chain_model_metadata_store import ChainModelMetadataStore
@@ -51,11 +52,15 @@ from utilities.perf_monitor import PerfMonitor
 
 os.environ["TOKENIZERS_PARALLELISM"] = "true"
 
+class Container:
+    '''Empty container object'''
+    pass
 
 class Validator:
     TRACKER_FILENAME = "model_tracker_2.pickle"
     UIDS_FILENAME = "uids_2.pickle"
     VERSION_FILENAME = "version.txt"
+    BENCHMARK_FILENAME = "benchmark.json"
 
     def state_path(self) -> str:
         """
@@ -501,11 +506,25 @@ class Validator:
 
     def update_weights(self, uids, model_weights):
         new_weights = torch.zeros_like(self.weights)
-        for i, uid_i in enumerate(uids):
-            new_weights[uid_i] = step_weights[i]
+        for uid, weight in model_weights.items():
+            new_weights[uid] = weight
         new_weights /= new_weights.sum()
-        self.weights = constants.alpha * self.weights + (1 - constants.alpha) * new_weights
+        if self.weights.count_nonzero().item() == 0:
+            self.weights = new_weights
+        else:
+            self.weights = constants.weight_alpha * self.weights + (1 - constants.weight_alpha) * new_weights
         self.weights = self.weights.nan_to_num(0.0)
+
+    def load_benchmark_config(self):
+        if not os.path.exists(self.BENCHMARK_FILENAME):
+            return {}
+        try:
+            with open(self.BENCHMARK_FILENAME) as f:
+                d = {int(k): v for k, v in json.load(f).items()}
+            return d
+        except Exception as e:
+            bt.logging.warning(f"Failed to load benchmark config: {e}")
+        return {}
 
     async def run_step(self):
         """
@@ -523,8 +542,8 @@ class Validator:
             self.uids_to_eval.update(self.pending_uids_to_eval)
             self.pending_uids_to_eval.clear()
 
-        # Pull relevant uids for step. If they aren't found in the model tracker on eval they will be skipped.
-        uids = list(self.uids_to_eval)
+        benchmark_cfg = self.load_benchmark_config()
+        uids = list(self.uids_to_eval | set(benchmark_cfg.keys()))
 
         if not uids:
             bt.logging.debug("No uids to eval. Waiting 5 minutes to download some models.")
@@ -554,11 +573,21 @@ class Validator:
         for uid in uids:
             bt.logging.trace(f"Computing model losses for uid {uid}.")
 
-            # Check that the model is in the tracker.
-            hotkey = self.metagraph.hotkeys[uid]
-            model_i_metadata = self.model_tracker.get_model_metadata_for_miner_hotkey(
-                hotkey
-            )
+            if uid in benchmark_cfg:
+                # Model data from dynamic config
+                bcfg = benchmark_cfg[uid]
+                hotkey = bcfg.get("hotkey", "xxx")
+                model_i_metadata = Container()
+                model_i_metadata.block = bcfg.get("block", 1<<31)
+                model_i_metadata.id = ModelId.from_compressed_str(bcfg.get("modelid", "sr:mdl:mhash:usrkey"))
+                model_path = bcfg.get('path', 'please specify path')
+            elif uid < len(self.metagraph.hotkeys):
+                # Model from chain
+                hotkey = self.metagraph.hotkeys[uid]
+                model_i_metadata = self.model_tracker.get_model_metadata_for_miner_hotkey(hotkey)
+                model_path = None
+            else:
+                model_i_metadata = None
 
             # This variable should be overwritten below if the model has metadata.
             losses = [math.inf for _ in range(len(batches))]
@@ -569,7 +598,7 @@ class Validator:
                     bt.logging.debug(f"Evaluating uid {uid} from block {uid_to_block[uid]}")
 
                     with load_model_perf.sample():
-                        model_i = self.local_store.retrieve_model(hotkey, model_i_metadata.id)
+                        model_i = self.local_store.retrieve_model(hotkey, model_i_metadata.id, path=model_path)
 
                     with compute_loss_perf.sample():
                         losses = utils.run_in_subprocess(
@@ -590,7 +619,7 @@ class Validator:
                     )
             else:
                 bt.logging.debug(
-                    f"Unable to load the model for {uid}. Setting loss to infinity."
+                    f"Unable to load metadata for {uid}. Setting loss to infinity."
                 )
 
             losses_per_uid[uid] = losses
