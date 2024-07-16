@@ -2,6 +2,7 @@ import functools
 import multiprocessing
 import os
 import time
+import resource
 from typing import Any, List, Optional, Tuple
 import bittensor as bt
 
@@ -56,6 +57,7 @@ def get_hf_url(model_metadata: ModelMetadata) -> str:
 
 
 def _wrapped_func(func: functools.partial, queue: multiprocessing.Queue):
+    resource.setrlimit(resource.RLIMIT_NOFILE, (65000, 65000))
     try:
         result = func()
         queue.put(result)
