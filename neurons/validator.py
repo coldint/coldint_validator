@@ -16,7 +16,6 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
-from collections import defaultdict
 import copy
 import datetime as dt
 import functools
@@ -38,7 +37,6 @@ from model.storage.chain.chain_model_metadata_store import ChainModelMetadataSto
 from model.storage.disk.disk_model_store import DiskModelStore
 from model.storage.hugging_face.hugging_face_model_store import HuggingFaceModelStore
 from neurons import config
-import model.utils as model_utils
 import traceback
 import threading
 import multiprocessing
@@ -71,6 +69,10 @@ class Validator:
     def __init__(self):
         self.config = config.validator_config()
         bt.logging(config=self.config)
+        if self.config.logging.debug:
+            bt.logging.set_debug(True)
+        if self.config.logging.trace:
+            bt.logging.set_trace(True)
 
         bt.logging.info(f"Starting validator with config: {self.config}")
 
@@ -89,11 +91,12 @@ class Validator:
         self.run_step_count = 0
 
         # Dont log to wandb if offline.
+        self.wandb_run = None
         if not self.config.offline and self.config.wandb.on:
             self.new_wandb_run()
 
         # === Running args ===
-        self.weights = torch.zeros_like(torch.tensor(self.metagraph.S))
+        self.weights = torch.zeros(constants.SUBNET_N_UIDS)
         self.epoch_step = 0
         self.global_step = 0
         self.last_epoch = self.metagraph.block.item()
@@ -182,6 +185,7 @@ class Validator:
         self.local_store = DiskModelStore(base_dir=self.config.model_dir)
 
         # Setup a model updater to download models as needed to match the latest provided miner metadata.
+        bt.logging.trace("Starting ModelUpdater")
         self.model_updater = ModelUpdater(
             metadata_store=self.metadata_store,
             remote_store=self.remote_store,
@@ -194,10 +198,12 @@ class Validator:
 
         # == Initialize the update thread ==
         self.stop_event = threading.Event()
+        bt.logging.trace("Starting update_models thread")
         self.update_thread = threading.Thread(target=self.update_models, daemon=True)
         self.update_thread.start()
 
         # == Initialize the cleaner thread to remove outdated models ==
+        bt.logging.trace("Starting clean_models thread")
         self.clean_thread = threading.Thread(target=self.clean_models, daemon=True)
         self.clean_thread.start()
 
@@ -216,7 +222,7 @@ class Validator:
         self.wandb_run = wandb.init(
             name=name,
             project=constants.WANDB_PROJECT,
-            entity="opentensor-dev",
+            entity=constants.WANDB_ENTITY,
             config={
                 "uid": self.uid,
                 "hotkey": self.wallet.hotkey.ss58_address,
@@ -493,10 +499,18 @@ class Validator:
         except asyncio.TimeoutError:
             bt.logging.error(f"Failed to run step after {ttl} seconds")
 
+    def update_weights(self, uids, model_weights):
+        new_weights = torch.zeros_like(self.weights)
+        for i, uid_i in enumerate(uids):
+            new_weights[uid_i] = step_weights[i]
+        new_weights /= new_weights.sum()
+        self.weights = constants.alpha * self.weights + (1 - constants.alpha) * new_weights
+        self.weights = self.weights.nan_to_num(0.0)
+
     async def run_step(self):
         """
         Executes a step in the evaluation process of models. This function performs several key tasks:
-            1. Identifies valid models for evaluation (top 30 from last run + newly updated models).
+            1. Identifies valid models for evaluation (top N from last run + newly updated models).
             2. Generates random pages for evaluation and prepares batches for each page from the dataset.
             3. Computes the scoring for each model based on the losses incurred on the evaluation batches.
             4. Calculates wins and win rates for each model to determine their performance relative to others.
@@ -504,7 +518,6 @@ class Validator:
             6. Implements a blacklist mechanism to remove underperforming models from the evaluation set.
             7. Logs all relevant data for the step, including model IDs, pages, batches, wins, win rates, and losses.
         """
-
         # Add uids with newly updated models to the upcoming batch of evaluations.
         with self.pending_uids_to_eval_lock:
             self.uids_to_eval.update(self.pending_uids_to_eval)
@@ -514,63 +527,23 @@ class Validator:
         uids = list(self.uids_to_eval)
 
         if not uids:
-            bt.logging.debug(
-                "No uids to eval. Waiting 5 minutes to download some models."
-            )
+            bt.logging.debug("No uids to eval. Waiting 5 minutes to download some models.")
             time.sleep(300)
             return
 
-        # Keep track of which block this uid last updated their model.
-        # Default to an infinite block if we can't retrieve the metadata for the miner.
-        uid_to_block = defaultdict(lambda: math.inf)
+        uid_to_block = {uid: math.inf for uid in uids}
+        bt.logging.debug(f'run_step() @ current block {self.current_block}')
 
-        bt.logging.trace(f'Current block: {self.current_block}')
-
-        # Decide on which dataset loader class to use
-        if self.current_block >= constants.BLOCK_FW_EDU_SCORE_2:
-            bt.logging.trace(f'Dataset in use: {constants.DATASET_2}.')
-            SubsetDataLoader = pt.dataset.SubsetFineWebEdu2Loader
-        else:
-            bt.logging.trace(f'Dataset in use: {constants.DATASET_1}.')
-            SubsetDataLoader = pt.dataset.SubsetFalconLoader
-
-        # Temporary ugliness to load the batches with both the previous tokenizer
-        # and the new tokenizer. batches_old can be removed once the block is newer
-        # than the point we allow 7B parameter models.
-
-        ## First tokenizer (Prior to 7B models)
-        tokenizer_old = pt.model.get_old_tokenizer(cache_dir=self.config.model_dir)
-        dataloader_old = SubsetDataLoader(
-                batch_size=constants.batch_size,
-                sequence_length=constants.SEQUENCE_LENGTH_1,
-                num_pages=self.config.pages_per_eval, # The pages will be sampled inside the object
-                tokenizer=tokenizer_old,
-            )
-
-        batches_old = list(
-            dataloader_old
-        )
-
-        # This is useful for logging to wandb
-        pages = dataloader_old.get_page_names()
-
-        ## Second tokenizer (For 7B models)
-        tokenizer_new = pt.model.get_tokenizer(cache_dir=self.config.model_dir)
-        dataloader_new = SubsetDataLoader(
+        tokenizer = pt.model.get_tokenizer(cache_dir=self.config.model_dir)
+        dataloader = pt.dataset.SubsetFineWebEdu2Loader(
             batch_size=constants.batch_size,
-            sequence_length=constants.SEQUENCE_LENGTH_2,
-            num_pages=None, # Do not automatically generate pages. They will be manually set.
-            tokenizer=tokenizer_new,
-            )
-
-        # Use the same pages as for models with old tokenizers
-        dataloader_new.fetch_data_for_pages(pages=dataloader_old.pages)
-
-        batches_new = list(
-            dataloader_new
+            num_pages=self.config.pages_per_eval,
+            tokenizer=tokenizer,
+            pack=False
         )
+        batches = list(dataloader)
 
-        bt.logging.debug(f"Computing losses on {uids} with pages {pages}")
+        bt.logging.debug(f"Computing losses on {uids} with {len(batches)} batches from pages {dataloader.pages}")
 
         # Compute model losses on batches.
         losses_per_uid = {muid: None for muid in uids}
@@ -578,60 +551,34 @@ class Validator:
         load_model_perf = PerfMonitor("Eval: Load model")
         compute_loss_perf = PerfMonitor("Eval: Compute loss")
 
-        for uid_i in uids:
-            bt.logging.trace(f"Computing model losses for uid:{uid_i}.")
+        for uid in uids:
+            bt.logging.trace(f"Computing model losses for uid {uid}.")
 
             # Check that the model is in the tracker.
-            hotkey = self.metagraph.hotkeys[uid_i]
+            hotkey = self.metagraph.hotkeys[uid]
             model_i_metadata = self.model_tracker.get_model_metadata_for_miner_hotkey(
                 hotkey
             )
 
             # This variable should be overwritten below if the model has metadata.
-            losses = [math.inf for _ in range(len(batches_new))]
+            losses = [math.inf for _ in range(len(batches))]
 
             if model_i_metadata != None:
                 try:
-                    # Update the block this uid last updated their model.
-                    uid_to_block[uid_i] = model_i_metadata.block
-                    # Get criteria to evaluate model with based on block.
-                    criteria = model_utils.get_model_criteria(model_i_metadata.block)
-                    # Use bfloat16 and flash attention optimization based on block.
-                    optimized = criteria.optimized
-                    # Use tokenizer based on block.
-                    tokenizer_identifier = criteria.tokenizer_identifier
+                    uid_to_block[uid] = model_i_metadata.block if model_i_metadata.block is not None else 1<<31
+                    bt.logging.debug(f"Evaluating uid {uid} from block {uid_to_block[uid]}")
 
-                    # Get the model locally and evaluate its loss.
-                    model_i = None
                     with load_model_perf.sample():
-                        model_i = self.local_store.retrieve_model(
-                            hotkey,
-                            model_i_metadata.id,
-                            optimized,
-                        )
+                        model_i = self.local_store.retrieve_model(hotkey, model_i_metadata.id)
 
                     with compute_loss_perf.sample():
-                        # Run each computation in a subprocess so that the GPU is reset between each model.
-                        batches_to_use = None
-
-                        # Keeping identical behavior of getting this from eos token id.
-                        # Currently we set pad token = eos token but not the ids on the get tokenizer methods.
-                        pad_token_id = None
-
-                        if tokenizer_identifier == TokenizerIdentifier.DISTILGPT_2:
-                            batches_to_use = batches_old
-                            pad_token_id = tokenizer_old.eos_token_id
-                        else:
-                            batches_to_use = batches_new
-                            pad_token_id = tokenizer_new.eos_token_id
-
                         losses = utils.run_in_subprocess(
                             functools.partial(
                                 pt.validation.compute_losses,
                                 model_i.pt_model,
-                                batches_to_use,
+                                batches,
                                 self.config.device,
-                                pad_token_id,
+                                tokenizer.eos_token_id,
                             ),
                             ttl=360,
                             mode="spawn",
@@ -639,44 +586,26 @@ class Validator:
                     del model_i
                 except Exception as e:
                     bt.logging.error(
-                        f"Error in eval loop: {e}. Setting losses for uid: {uid_i} to infinity."
+                        f"Error in eval loop: {e}. Setting losses for uid: {uid} to infinity.\n{traceback.format_exc()}"
                     )
             else:
                 bt.logging.debug(
-                    f"Unable to load the model for {uid_i}. Setting loss to inifinity."
+                    f"Unable to load the model for {uid}. Setting loss to infinity."
                 )
 
-            losses_per_uid[uid_i] = losses
-            average_model_loss = sum(losses) / len(losses)
-            bt.logging.trace(
-                f"Computed model losses for uid:{uid_i} with average loss: {average_model_loss}"
-            )
+            losses_per_uid[uid] = losses
+            bt.logging.debug(f"Losses for uid:{uid}: {np.nanmean(losses):.03f} +- {np.nanstd(losses):.03f}")
 
-        # Compute wins and win rates per uid.
-        wins, win_rate = pt.validation.compute_wins(
-            uids, losses_per_uid, batches_new, uid_to_block
-        )
+        win_info = pt.validation.compute_wins(losses_per_uid, uid_to_block, self.current_block)
+        if 'win_rate' not in win_info:
+            bt.logging.warning("compute_wins() returned no result")
+            return
 
-        # Compute softmaxed weights based on win rate.
-        model_weights = torch.tensor(
-            [win_rate[uid] for uid in uids], dtype=torch.float32
-        )
-        step_weights = torch.softmax(model_weights / constants.temperature, dim=0)
+        win_rate = win_info['win_rate']
+        self.update_weights(uids, win_rate)
 
-        # Update weights based on moving average.
-        new_weights = torch.zeros_like(self.weights)
-        for i, uid_i in enumerate(uids):
-            new_weights[uid_i] = step_weights[i]
-        new_weights /= new_weights.sum()
-        self.weights = (
-            constants.alpha * self.weights + (1 - constants.alpha) * new_weights
-        )
-        self.weights = self.weights.nan_to_num(0.0)
-
-        # Prioritize models for keeping up to the sample_min for the next eval loop.
-        # If the model has any significant weight, prioritize by weight with greater weights being kept first.
-        # Then for the unweighted models, prioritize by win_rate.
-        model_prioritization = {
+        # Model sort order: by weight if >= 0.001, win-rate otherwise
+        model_prio = {
             uid: (
                 # Add 1 to ensure it is always greater than a win rate.
                 1 + self.weights[uid].item()
@@ -685,14 +614,8 @@ class Validator:
             )
             for uid, wr in win_rate.items()
         }
+        self.uids_to_eval = set(sorted(model_prio, key=model_prio.get, reverse=True)[:self.config.sample_min])
 
-        self.uids_to_eval = set(
-            sorted(model_prioritization, key=model_prioritization.get, reverse=True)[
-                : self.config.sample_min
-            ]
-        )
-
-        # Save state
         self.save_state()
 
         # Log the performance of the eval loop.
@@ -700,12 +623,13 @@ class Validator:
         bt.logging.debug(compute_loss_perf.summary_str())
 
         # Log to screen and wandb.
+        pages_desc = [f'{cfg_name}_{num_rows}_{split}' for cfg_name, num_rows, split in dataloader.pages]
         self.log_step(
             uids,
             uid_to_block,
-            pages,
-            wins,
-            win_rate,
+            pages_desc,
+            win_info,
+            benchmark_cfg,
             losses_per_uid,
             load_model_perf.summary_str(),
             compute_loss_perf.summary_str(),
@@ -714,13 +638,34 @@ class Validator:
         # Increment the number of completed run steps by 1
         self.run_step_count += 1
 
+    def print_win_matrix(self, matrix, benchmark_cfg=None):
+        table = Table(title="Model win matrix, true wins/adv wins/avg delta loss")
+        table.add_column("win \ lose", justify="right", style="cyan", no_wrap=True)
+        for uid in matrix:
+            table.add_column(f'UID {uid}')
+        for uid_a,row in matrix.items():
+            label = ''
+            if uid_a in benchmark_cfg:
+                label = benchmark_cfg[uid_a].get('label', benchmark_cfg[uid_a].get('path', '???')) + ' '
+            vals = [f'{label}UID {uid_a}']
+            for uid_b,wins in row.items():
+                val = '?'
+                if uid_a==uid_b:
+                    val = '...'
+                elif wins is not None:
+                    val = f'{wins["wins"]}/{wins["wins_adv"]}/{wins["loss"]:.01f}'
+                vals.append(val)
+            table.add_row(*vals)
+        console = Console()
+        console.print(table)
+
     def log_step(
         self,
         uids,
         uid_to_block,
         pages,
-        wins,
-        win_rate,
+        win_info,
+        benchmark_cfg,
         losses_per_uid,
         load_model_perf_str,
         compute_loss_perf_str,
@@ -733,36 +678,48 @@ class Validator:
             "uids": uids,
             "uid_data": {},
         }
+        wins = win_info.get('wins', {})
+        win_rate = win_info.get('win_rate', {})
+        advantage_factors = win_info.get('advantage_factors', {})
         for i, uid in enumerate(uids):
             step_log["uid_data"][str(uid)] = {
                 "uid": uid,
                 "block": uid_to_block[uid],
-                "average_loss": sum(losses_per_uid[uid]) / len(losses_per_uid[uid]),
-                "win_rate": win_rate[uid],
-                "win_total": wins[uid],
+                "loss_avg": np.nanmean(losses_per_uid[uid]),
+                "loss_std": np.nanstd(losses_per_uid[uid]),
+                "adv_factor": 100*(1-advantage_factors.get(uid,1)),
+                "win_rate": win_rate.get(uid, 0),
+                "win_total": wins.get(uid, 0),
                 "weight": self.weights[uid].item(),
             }
         table = Table(title="Step")
         table.add_column("uid", justify="right", style="cyan", no_wrap=True)
         table.add_column("average_loss", style="magenta")
+        table.add_column("adv_factor(%)", style="magenta")
         table.add_column("win_rate", style="magenta")
         table.add_column("win_total", style="magenta")
         table.add_column("weights", style="magenta")
         table.add_column("block", style="magenta")
         for uid in uids:
+            d = step_log["uid_data"][str(uid)]
             try:
                 table.add_row(
                     str(uid),
-                    str(round(step_log["uid_data"][str(uid)]["average_loss"], 4)),
-                    str(round(step_log["uid_data"][str(uid)]["win_rate"], 4)),
-                    str(step_log["uid_data"][str(uid)]["win_total"]),
+                    f"{d['loss_avg']:.04f}+-{d['loss_std']:.04f}",
+                    f"{d['adv_factor']:.03f}",
+                    str(round(d["win_rate"], 4)),
+                    str(d["win_total"]),
                     str(round(self.weights[uid].item(), 4)),
-                    str(step_log["uid_data"][str(uid)]["block"]),
+                    str(d["block"]),
                 )
             except:
                 pass
         console = Console()
         console.print(table)
+
+        win_matrix = win_info.get('matrix', None)
+        if win_matrix is not None:
+            self.print_win_matrix(win_matrix, benchmark_cfg)
 
         ws, ui = self.weights.topk(len(self.weights))
         table = Table(title="Weights > 0.001")
@@ -774,7 +731,6 @@ class Validator:
         console = Console()
         console.print(table)
 
-        # Sink step log.
         bt.logging.trace(f"Step results: {step_log}")
 
         if self.config.wandb.on and not self.config.offline:
@@ -798,7 +754,7 @@ class Validator:
                 "time": time.time(),
                 "block": self.metagraph.block.item(),
                 "uid_data": {
-                    str(uid): uid_data[str(uid)]["average_loss"] for uid in uids
+                    str(uid): uid_data[str(uid)]["loss_avg"] for uid in uids
                 },
                 "weight_data": {str(uid): self.weights[uid].item() for uid in uids},
                 "load_model_perf_log": load_model_perf_str,
@@ -814,7 +770,6 @@ class Validator:
         """Runs the validator loop, which continuously evaluates models and sets weights."""
         while True:
             try:
-
                 while (
                         (self.metagraph.block.item() - self.last_epoch)
                         < self.config.blocks_per_epoch
