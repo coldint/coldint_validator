@@ -69,16 +69,13 @@ class ModelUpdater:
             return False
 
         # Check that the hash of the downloaded content matches.
-        if model.id.hash != metadata.id.hash:
-            # If the hash does not match directly, also try it with the hotkey of the miner.
-            # This is allowed to help miners prevent same-block copiers.
-            hash_with_hotkey = get_hash_of_two_strings(model.id.hash, hotkey)
-            if hash_with_hotkey != metadata.id.hash:
-                bt.logging.trace(
-                    f"Sync for hotkey {hotkey} failed. Hash of content downloaded from hugging face {model.id.hash} "
-                    + f"or the hash including the hotkey {hash_with_hotkey} do not match chain metadata {metadata}."
-                )
-                return False
+        hash_with_hotkey = get_hash_of_two_strings(model.id.hash, hotkey)
+        if hash_with_hotkey != metadata.id.hash:
+            bt.logging.trace(
+                f"Sync for hotkey {hotkey} failed. Hash of content downloaded from hugging face {model.id.hash} "
+                + f"or the hash including the hotkey {hash_with_hotkey} do not match chain metadata {metadata}."
+            )
+            return False
 
         # Check that the parameter count of the model is within allowed bounds.
         parameter_size = sum(p.numel() for p in model.pt_model.parameters())

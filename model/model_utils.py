@@ -82,9 +82,9 @@ async def push_model_id(
     wallet: bt.wallet,
     retry_delay_secs: int = 60,
     metadata_store: Optional[ModelMetadataStore] = None,
-    subtensor=None
+    subtensor = None
 ):
-    bt.logging.success(f"Now committing to the chain with model_id: {model_id}")
+    bt.logging.success(f"Now committing to the chain with model_id: {model_id}\n{model_id.to_compressed_str()}")
 
     if metadata_store is None:
         metadata_store = ChainModelMetadataStore(subtensor, wallet)
@@ -125,7 +125,8 @@ async def push(
     retry_delay_secs: int = 60,
     metadata_store: Optional[ModelMetadataStore] = None,
     remote_model_store: Optional[RemoteModelStore] = None,
-    use_hotkey_in_hash: bool = True,
+    competition = None,
+    subtensor = None,
 ):
     """Pushes the model to Hugging Face and publishes it on the chain for evaluation by validators.
 
@@ -137,12 +138,14 @@ async def push(
         metadata_store (Optional[ModelMetadataStore]): The metadata store. If None, defaults to writing to the
             chain.
         remote_model_store (Optional[RemoteModelStore]): The remote model store. If None, defaults to writing to HuggingFace
-        use_hotkey_in_hash (bool): If the hash used in the metadata should include the miner hotkey.
     """
     bt.logging.info("Pushing model")
 
     if remote_model_store is None:
         remote_model_store = HuggingFaceModelStore()
+
+    if competition is None:
+        competition = constants.COMPETITION_ID
 
     # First upload the model to HuggingFace.
     namespace, name = utils.validate_hf_repo_id(repo)
@@ -151,15 +154,19 @@ async def push(
 
     bt.logging.success("Uploaded model to hugging face.")
 
-    # If using hotkey in the hash then adjust the hash.
-    if use_hotkey_in_hash:
-        bt.logging.info(
-            f"Hashing miner hotkey {wallet.hotkey.ss58_address} into the hash before uploading."
-        )
-        new_hash = get_hash_of_two_strings(model_id.hash, wallet.hotkey.ss58_address)
-        model_id = model_id.copy(update={"hash": new_hash})
+    bt.logging.info(
+        f"Hashing miner hotkey {wallet.hotkey.ss58_address} into the hash before uploading."
+    )
+    new_hash = get_hash_of_two_strings(model_id.hash, wallet.hotkey.ss58_address)
+    model_id = model_id.copy(update={"hash": new_hash, "competition": competition})
 
-    return await push_model_id(model_id, wallet, retry_delay_secs, metadata_store, subtensor)
+    return await push_model_id(
+            model_id=model_id,
+            wallet=wallet,
+            retry_delay_secs=retry_delay_secs,
+            metadata_store=metadata_store,
+            subtensor=subtensor
+    )
 
 
 def save(model: PreTrainedModel, model_dir: str):
@@ -192,23 +199,25 @@ async def get_repo(
 
     return utils.get_hf_url(model_metadata)
 
+def convert_dtype(dtype):
+    if type(dtype) is torch.dtype:
+        return dtype
+    if dtype == 'bfloat16':
+        return torch.bfloat16
+    if dtype == 'float16':
+        return torch.float16
+    if dtype == 'float32':
+        return torch.float32
+    raise ValueError("Unknown torch datatype {dtype}")
 
-def load_local_model(model_dir: str, use_bf16: bool = False) -> PreTrainedModel:
+def load_local_model(model_dir: str, dtype='bfloat16') -> PreTrainedModel:
     """Loads a model from a directory."""
-    if use_bf16:
-        return AutoModelForCausalLM.from_pretrained(
-            pretrained_model_name_or_path=model_dir,
-            local_files_only=True,
-            use_safetensors=True,
-            torch_dtype=torch.bfloat16,
-        )
-    else:
-        return AutoModelForCausalLM.from_pretrained(
-            pretrained_model_name_or_path=model_dir,
-            local_files_only=True,
-            use_safetensors=True,
-        )
-
+    return AutoModelForCausalLM.from_pretrained(
+        pretrained_model_name_or_path=model_dir,
+        local_files_only=True,
+        use_safetensors=True,
+        torch_dtype=convert_dtype(dtype)
+    )
 
 def best_uid(metagraph: Optional[bt.metagraph] = None) -> int:
     """Returns the best performing UID in the metagraph."""
