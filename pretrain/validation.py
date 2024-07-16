@@ -98,63 +98,6 @@ def compute_wins(
     return dict(wins=wins, win_rate=win_fractions, advantage_factors=uid_advantage_factors, matrix=matrix)
 
 
-def check_for_reasonable_output(
-    model, input1: torch.Tensor, input2: torch.Tensor, pad_token_id: int
-) -> bool:
-    """Checks that a model generates reasonable outputs for two given inputs.
-
-    Args:
-        model (torch.nn.Module): The model for which outputs are to be checked. Already loaded to device.
-        input1 (torch.Tensor]): Tokenized input1 to check. Already loaded to device.
-        input2 (torch.Tensor]): Tokenized input2 to check. Already loaded to device.
-        pad_token_id (int): Pad token id for the tokenizer used to generate inputs 1 and 2.
-
-    Returns:
-        bool: If the model generates reasonable outputs.
-    """
-    # Generate 20 tokens of output from the model for each prompt.
-    output_length = 20
-    # Only take the last 20 tokens since otherwise we also get the prompt ids.
-    generate_id1s = model.generate(
-        input1,
-        min_new_tokens=output_length,
-        max_new_tokens=output_length,
-        pad_token_id=pad_token_id,
-    )[:, -output_length:]
-    generate_id2s = model.generate(
-        input2,
-        min_new_tokens=output_length,
-        max_new_tokens=output_length,
-        pad_token_id=pad_token_id,
-    )[:, -output_length:]
-
-    # Check if too many of the generated ids are the same between the two outputs.
-    if torch.sum(torch.eq(generate_id1s, generate_id2s)).item() >= output_length / 2:
-        bt.logging.info(
-            f"Model with config {model.config} had too much overlap between generated outputs."
-        )
-        return False
-
-    # Check if internally both responses are too repetitive.
-    most_common_counts = []
-    for tensor in [generate_id1s, generate_id2s]:
-        # Find unique elements and their counts
-        _, counts = torch.unique(tensor, return_counts=True)
-        # Find the index of the maximum count
-        max_count_index = torch.argmax(counts)
-        # Extract the count of the most common element
-        most_common_counts.append(counts[max_count_index].item())
-
-    if all(count > output_length / 2 for count in most_common_counts):
-        bt.logging.info(
-            f"Model with config {model.config} had too much repetition in generated outputs."
-        )
-        return False
-
-    # Passed all the checks, return True.
-    return True
-
-
 def compute_losses(
     model, batches: typing.List[torch.Tensor], device: str, pad_token_id: int
 ) -> typing.List[float]:
@@ -173,20 +116,6 @@ def compute_losses(
     model.to(device)
     model.eval()
 
-    # First check that model generates reasonable looking outputs.
-    # Grab 100 tokens from the first two batches as 'prompts'. (1 x Seq Length tensors.)
-    prompt_length = 100
-    token_inputs_1 = (batches[0][:, :prompt_length]).to(device)
-    token_inputs_2 = (batches[1][:, :prompt_length]).to(device)
-
-    if not check_for_reasonable_output(
-        model, token_inputs_1, token_inputs_2, pad_token_id
-    ):
-        return [math.inf for _ in range(len(batches))]
-
-    # Everything looks good! Continue to computing actual losses.
-
-    # Iterate over each page and corresponding batches
     losses = []
     with torch.no_grad():
         for batch in batches:
@@ -205,7 +134,7 @@ def compute_losses(
                 losses.append(loss)
             except Exception as e:
                 bt.logging.error(f"Exception occurred: {e}")
-                traceback.print_exc()  # Print the stack trace
+                traceback.print_exc()
                 losses.append(math.inf)  # Use infinity to indicate failure
 
     return losses
