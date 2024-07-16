@@ -16,6 +16,10 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+# Example miner / model training code.
+# Do not expect much without extensive tuning of parameters or code updates!
+# (Parameters depend heavily on the state of the model you're starting from)
+
 import asyncio
 import math
 import os
@@ -46,9 +50,6 @@ def get_config():
     """
     Set up and parse the command-line arguments to configure the system.
 
-    The configuration is responsible for setting up the environment including
-    the model path, device to use, and the bittensor wallet and logging configurations.
-
     Returns:
         A namespace object containing the configuration parameters.
     """
@@ -65,17 +66,6 @@ def get_config():
         "--wandb_project", type=str, help="The wandb project to log to."
     )
     parser.add_argument("--wandb_entity", type=str, help="The wandb entity to log to.")
-    parser.add_argument(
-        "--hf_repo_id",
-        type=str,
-        help="The hugging face repo id, which should include the org or user and repo name. E.g. jdoe/pretraining",
-    )
-    parser.add_argument(
-        "--avg_loss_upload_threshold",
-        type=float,
-        default=0,  # Default to never uploading.
-        help="The threshold for avg_loss the model must achieve to upload it to hugging face. A miner can only advertise one model, so it should be the best one.",
-    )
     parser.add_argument(
         "--model_dir",
         default=os.path.join(constants.ROOT_DIR, "local-models/"),
@@ -105,16 +95,10 @@ def get_config():
         help="If provided, loads a previously trained HF model from the specified directory",
     )
     parser.add_argument(
-        "--upload_b16",
-        action="store_true",  # Currently defaults to false. Flip post 7b block.
-        help="If true, upload the model using bfloat16.",
-    )
-    parser.add_argument(
         "--load_model",
         type=str,
         default=None,
         help="If provided, loads the safetensor serialized model from the specified file."
-        "The model must be a GPT2LMHeadModel, with config as in pretrain/model.py",
     )
     parser.add_argument(
         "--num_epochs",
@@ -122,12 +106,20 @@ def get_config():
         default=-1,
         help="Number of training epochs (-1 is infinite)",
     )
-    parser.add_argument("--lr", type=float, default=0.00001, help="Learning rate.")
+    parser.add_argument(
+        "--save_interval",
+        type=int,
+        default=5,
+        help="Save model after this many epochs",
+    )
+    parser.add_argument("--pack-samples", default=False, action="store_true", help="Pack samples")
+    parser.add_argument("--lr", type=float, default=1e-5, help="Learning rate")
+    parser.add_argument("--wdecay", type=float, default=1e-3, help="Weight decay")
     parser.add_argument(
         "--bs", type=int, default=constants.batch_size, help="Batch size"
     )
     parser.add_argument(
-        "--sl", type=int, default=constants.SEQUENCE_LENGTH_2, help="Sequence length"
+        "--sl", type=int, default=2048, help="(Max) sequence length"
     )
     parser.add_argument(
         "--accumulation_steps",
@@ -146,11 +138,6 @@ def get_config():
         type=str,
         default=constants.SUBNET_UID,
         help="The subnet UID.",
-    )
-    parser.add_argument(
-        "--use_hotkey_in_hash",
-        action="store_true",  # Defaults to False.
-        help="If true, use the hotkey of the miner when generating the hash.",
     )
 
     # Include wallet and logging arguments from bittensor
@@ -175,8 +162,8 @@ async def load_starting_model(
     # Initialize the model based on the best on the network.
     if config.load_best:
         # Get the best UID be incentive and load it.
-        best_uid = pt.graph.best_uid(metagraph)
-        model = await pt.mining.load_remote_model(
+        best_uid = model.best_uid(metagraph)
+        model = await model.load_remote_model(
             best_uid,
             config.model_dir,
             metagraph,
@@ -191,7 +178,7 @@ async def load_starting_model(
     # Initialize the model based on a passed uid.
     if config.load_uid is not None:
         # Sync the state from the passed uid.
-        model = await pt.mining.load_remote_model(
+        model = await model.load_remote_model(
             config.load_uid,
             config.model_dir,
             metagraph,
@@ -205,41 +192,33 @@ async def load_starting_model(
 
     # Check if we should load a model from a local directory.
     if config.load_model_dir:
-        model = pt.mining.load_local_model(config.load_model_dir)
+        model = model.load_local_model(config.load_model_dir)
         bt.logging.success(f"Training with model from disk. Model={str(model)}")
         return model
 
     # Check if we should load a model from a local file.
     if config.load_model:
-        model = pt.mining.load_gpt2_model(config.load_model)
+        model = model.load_gpt2_model(config.load_model)
         bt.logging.success(f"Training with model from disk. Model={str(model)}")
         return model
 
-    # Start from scratch.
-    model = pt.model.get_model()
-    bt.logging.success(f"Training from scratch. Model={str(model)}")
-
-    return model
+    bt.logging.error("Please provide a starting model")
+    return None
 
 
 async def main(config: bt.config):
-    # Create bittensor objects.
     bt.logging(config=config)
 
-    wallet = bt.wallet(config=config)
-    subtensor = bt.subtensor(config=config)
-    metagraph = subtensor.metagraph(config.netuid)
-
-    # If running online, make sure the miner is registered, has a hugging face access token, and has provided a repo id.
-    my_uid = None
-    if not config.offline:
-        my_uid = utils.assert_registered(wallet, metagraph)
-        HuggingFaceModelStore.assert_access_token_exists()
-        utils.validate_hf_repo_id(config.hf_repo_id)
+    # Create bittensor objects if interaction with the chain is required
+    # (no need to be registered)
+    wallet = subtensor = metagraph = remote_store = None
+    if config.load_uid or config.load_best:
+        subtensor = bt.subtensor(config=config)
+        remote_store = HuggingFaceModelStore()
 
     # Create a unique run id for this run.
     run_id = dt.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    model_dir = pt.mining.model_path(config.model_dir, run_id)
+    model_dir = model.model_path(config.model_dir, run_id)
     os.makedirs(model_dir, exist_ok=True)
 
     use_wandb = False
@@ -252,19 +231,20 @@ async def main(config: bt.config):
             use_wandb = True
 
     # Init model.
-    metadata_store = ChainModelMetadataStore(subtensor, wallet, config.netuid)
-    remote_store = HuggingFaceModelStore()
+    metadata_store = ChainModelMetadataStore(subtensor, None, config.netuid)
     model: PreTrainedModel = await load_starting_model(
         config, metagraph, metadata_store, remote_store
     )
+    if model is None:
+        return False
     model = model.train()
     model = model.to(config.device)
 
     bt.logging.success(f"Saving model to path: {model_dir}.")
-    pt.mining.save(model, model_dir)
+    model.save(model, model_dir)
 
     # Build optimizer
-    optimizer = torch.optim.AdamW(model.parameters(), lr=config.lr, weight_decay=0.01)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=config.lr, weight_decay=config.wdecay)
     wandb_run = None
 
     # If using wandb, start a new run.
@@ -282,8 +262,6 @@ async def main(config: bt.config):
             entity=config.wandb_entity,
             project=config.wandb_project,
             config={
-                "uid": my_uid,
-                "hotkey": wallet.hotkey.ss58_address,
                 "run_name": run_id,
                 "version": constants.__validator_version__,
                 "type": "miner",
@@ -303,7 +281,6 @@ async def main(config: bt.config):
     epoch_step = 0
     global_step = 0
     n_acc_steps = 0
-    best_avg_loss = math.inf
     accumulation_steps = config.accumulation_steps
     tokenizer = pt.model.get_tokenizer()
 
@@ -316,15 +293,12 @@ async def main(config: bt.config):
             bt.logging.success(
                 f"Loading {config.pages_per_epoch} pages for training this epoch"
             )
-            random_pages = [
-                random.randint(1, pt.dataset.SubsetFalconLoader.max_pages)
-                for _ in range(config.pages_per_epoch)
-            ]
-            loader = pt.dataset.SubsetFalconLoader(
+            loader = pt.dataset.SubsetFineWebEdu2Loader(
                 batch_size=config.bs,
                 sequence_length=config.sl,
-                pages=random_pages,
+                num_pages=config.pages_per_epoch,
                 tokenizer=tokenizer,
+                pack=config.pack_samples,
             )
 
             # Enumerate over the data loader
@@ -367,44 +341,12 @@ async def main(config: bt.config):
             bt.logging.success(f"Epoch: {epoch_step} average loss: {avg_loss}")
             epoch_step += 1
 
-            # Check if the average loss of this epoch is the best we've seen so far
-            if avg_loss < best_avg_loss:
-                best_avg_loss = avg_loss  # Update the best average loss
-
-                bt.logging.success(f"New best average loss: {best_avg_loss}.")
-
-                # Save the model to your mining dir.
+            if (epoch_step % config.save_interval) == 0:
                 bt.logging.success(f"Saving model to path: {model_dir}.")
-                pt.mining.save(model, model_dir)
+                model.save(model, model_dir)
 
-        bt.logging.success("Finished training")
-        # Push the model to your run.
-        if not config.offline:
-            if best_avg_loss < config.avg_loss_upload_threshold:
-                bt.logging.success(
-                    f"Trained model had a best_avg_loss of {best_avg_loss} which is below the threshold of {config.avg_loss_upload_threshold}. Uploading to hugging face. "
-                )
-
-                # First, reload the best model from the training run, using b16 if passed.
-                model_to_upload = pt.mining.load_local_model(
-                    model_dir, config.upload_b16
-                )
-                await pt.mining.push(
-                    model_to_upload,
-                    config.hf_repo_id,
-                    wallet,
-                    metadata_store=metadata_store,
-                    remote_model_store=remote_store,
-                    use_hotkey_in_hash=config.use_hotkey_in_hash,
-                )
-            else:
-                bt.logging.success(
-                    f"This training run achieved a best_avg_loss={best_avg_loss}, which did not meet the upload threshold. Not uploading to hugging face."
-                )
-        else:
-            bt.logging.success(
-                "Not uploading to hugging face because --offline was specified."
-            )
+        bt.logging.success(f"Finished training, saving model to {model_dir}")
+        model.save(model, model_dir)
 
     finally:
         # Important step.
