@@ -51,6 +51,47 @@ def model_path(base_dir: str, run_id: str) -> str:
     return os.path.join(base_dir, "training", run_id)
 
 
+async def push_model_id(
+    model_id: ModelId,
+    wallet: bt.wallet,
+    retry_delay_secs: int = 60,
+    metadata_store: Optional[ModelMetadataStore] = None,
+    subtensor=None
+):
+    bt.logging.success(f"Now committing to the chain with model_id: {model_id}")
+
+    if metadata_store is None:
+        metadata_store = ChainModelMetadataStore(subtensor, wallet)
+
+    # We can only commit to the chain every 20 minutes, so run this in a loop, until
+    # successful.
+    for j in range(10):
+        if j:
+            bt.logging.error(f"Could not read back commitment, retrying from start (#{j}).")
+        try:
+            await metadata_store.store_model_metadata(wallet.hotkey.ss58_address, model_id)
+            bt.logging.info("Wrote model metadata to the chain. Checking we can read it back...")
+        except Exception as e:
+            bt.logging.error(f"Commit maybe failed? {e}")
+
+        for i in range(10):
+            if i:
+                bt.logging.error(f"Read-back failed, retrying read (#{i})")
+            try:
+                model_metadata = await metadata_store.retrieve_model_metadata(wallet.hotkey.ss58_address)
+
+                if model_metadata and model_metadata.id == model_id:
+                    bt.logging.success("Read back successful; committed model to the chain.")
+                    return True
+                bt.logging.error(f"Failed to read back model metadata from the chain. Expected: {model_id}, got: {model_metadata}. Retrying commit.")
+                break
+            except Exception as e:
+                bt.logging.error(f"Exception reading metadata from chain: {e}")
+            time.sleep(retry_delay_secs)
+
+    return False
+
+
 async def push(
     model: PreTrainedModel,
     repo: str,
@@ -58,7 +99,7 @@ async def push(
     retry_delay_secs: int = 60,
     metadata_store: Optional[ModelMetadataStore] = None,
     remote_model_store: Optional[RemoteModelStore] = None,
-    use_hotkey_in_hash: bool = False,
+    use_hotkey_in_hash: bool = True,
 ):
     """Pushes the model to Hugging Face and publishes it on the chain for evaluation by validators.
 
@@ -73,9 +114,6 @@ async def push(
         use_hotkey_in_hash (bool): If the hash used in the metadata should include the miner hotkey.
     """
     bt.logging.info("Pushing model")
-
-    if metadata_store is None:
-        metadata_store = ChainModelMetadataStore(bt.subtensor(), wallet)
 
     if remote_model_store is None:
         remote_model_store = HuggingFaceModelStore()
@@ -95,38 +133,7 @@ async def push(
         new_hash = get_hash_of_two_strings(model_id.hash, wallet.hotkey.ss58_address)
         model_id = model_id.copy(update={"hash": new_hash})
 
-    bt.logging.success(f"Now committing to the chain with model_id: {model_id}")
-
-    # We can only commit to the chain every 20 minutes, so run this in a loop, until
-    # successful.
-    while True:
-        try:
-            await metadata_store.store_model_metadata(
-                wallet.hotkey.ss58_address, model_id
-            )
-
-            bt.logging.info(
-                "Wrote model metadata to the chain. Checking we can read it back..."
-            )
-
-            model_metadata = await metadata_store.retrieve_model_metadata(
-                wallet.hotkey.ss58_address
-            )
-
-            if not model_metadata or model_metadata.id != model_id:
-                bt.logging.error(
-                    f"Failed to read back model metadata from the chain. Expected: {model_id}, got: {model_metadata}"
-                )
-                raise ValueError(
-                    f"Failed to read back model metadata from the chain. Expected: {model_id}, got: {model_metadata}"
-                )
-
-            bt.logging.success("Committed model to the chain.")
-            break
-        except Exception as e:
-            bt.logging.error(f"Failed to advertise model on the chain: {e}")
-            bt.logging.error(f"Retrying in {retry_delay_secs} seconds...")
-            time.sleep(retry_delay_secs)
+    return await push_model_id(model_id, wallet, retry_delay_secs, metadata_store, subtensor)
 
 
 def save(model: PreTrainedModel, model_dir: str):
