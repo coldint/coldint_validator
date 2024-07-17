@@ -71,50 +71,7 @@ class Validator:
         """
         return os.path.join(self.config.model_dir, "vali-state")
 
-    def __init__(self):
-        self.config = config.validator_config()
-        bt.logging(config=self.config)
-        if self.config.logging.debug:
-            bt.logging.set_debug(True)
-        if self.config.logging.trace:
-            bt.logging.set_trace(True)
-
-        bt.logging.info(f"Starting validator with config: {self.config}")
-
-        # === Bittensor objects ====
-        self.wallet = bt.wallet(config=self.config)
-        self.subtensor = bt.subtensor(config=self.config)
-        self.dendrite = bt.dendrite(wallet=self.wallet)
-        self.metagraph = self.subtensor.metagraph(self.config.netuid, lite=False)
-        torch.backends.cudnn.benchmark = True
-
-        # Dont check registration status if offline.
-        if not self.config.offline:
-            self.uid = utils.assert_registered(self.wallet, self.metagraph)
-
-        # Track how may run_steps this validator has completed.
-        self.run_step_count = 0
-
-        # Dont log to wandb if offline.
-        self.wandb_run = None
-        if not self.config.offline and self.config.wandb.on:
-            self.new_wandb_run()
-
-        # === Running args ===
-        self.weights = torch.zeros(constants.SUBNET_N_UIDS)
-        self.epoch_step = 0
-        self.global_step = 0
-        self.last_epoch = self.metagraph.block.item()
-
-        self.uids_to_eval = set()
-
-        # Create a set of newly added uids that should be evaluated on the next loop.
-        self.pending_uids_to_eval_lock = threading.RLock()
-        self.pending_uids_to_eval = set()
-
-        # Setup a model tracker to track which miner is using which model id.
-        self.model_tracker = ModelTracker()
-
+    def load_state(self):
         # Construct the filepaths to save/load state.
         state_dir = self.state_path()
         os.makedirs(state_dir, exist_ok=True)
@@ -173,6 +130,52 @@ class Validator:
                         f"Because the uids to eval state failed to load, deleting tracker state at {self.tracker_filepath} so everything is re-evaluated."
                     )
                     os.remove(self.tracker_filepath)
+
+    def __init__(self):
+        self.config = config.validator_config()
+        bt.logging(config=self.config)
+        if self.config.logging.debug:
+            bt.logging.set_debug(True)
+        if self.config.logging.trace:
+            bt.logging.set_trace(True)
+
+        bt.logging.info(f"Starting validator with config: {self.config}")
+
+        # === Bittensor objects ====
+        self.wallet = bt.wallet(config=self.config)
+        self.subtensor = bt.subtensor(config=self.config)
+        self.dendrite = bt.dendrite(wallet=self.wallet)
+        self.metagraph = self.subtensor.metagraph(self.config.netuid, lite=False)
+        torch.backends.cudnn.benchmark = True
+
+        # Dont check registration status if offline.
+        if not self.config.offline:
+            self.uid = utils.assert_registered(self.wallet, self.metagraph)
+
+        # Track how may run_steps this validator has completed.
+        self.run_step_count = 0
+
+        # Dont log to wandb if offline.
+        self.wandb_run = None
+        if self.config.wandb.on and not self.config.offline:
+            self.new_wandb_run()
+
+        # === Running args ===
+        self.weights = torch.zeros(constants.SUBNET_N_UIDS)
+        self.epoch_step = 0
+        self.global_step = 0
+        self.last_epoch = self.metagraph.block.item()
+
+        self.uids_to_eval = set()
+
+        # Create a set of newly added uids that should be evaluated on the next loop.
+        self.pending_uids_to_eval_lock = threading.RLock()
+        self.pending_uids_to_eval = set()
+
+        # Setup a model tracker to track which miner is using which model id.
+        self.model_tracker = ModelTracker()
+
+        self.load_state()
 
         # Setup a miner iterator to ensure we update all miners.
         # This subnet does not differentiate between miner and validators so this is passed all uids.
