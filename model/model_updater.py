@@ -1,7 +1,7 @@
 import bittensor as bt
 from typing import Optional
 import constants
-from model import utils
+from pretrain.mining import get_hash_of_two_strings
 from model.data import ModelMetadata
 from model.model_tracker import ModelTracker
 from model.storage.local_model_store import LocalModelStore
@@ -58,8 +58,7 @@ class ModelUpdater:
 
         # Otherwise we need to download the new model based on the metadata.
         try:
-            # Max size according to the block.
-            model_size_limit = utils.get_model_criteria(metadata.block).max_model_bytes
+            model_size_limit = constants.MAX_MODEL_BYTES
             model = await self.remote_store.download_model(
                 metadata.id, path, model_size_limit
             )
@@ -73,7 +72,7 @@ class ModelUpdater:
         if model.id.hash != metadata.id.hash:
             # If the hash does not match directly, also try it with the hotkey of the miner.
             # This is allowed to help miners prevent same-block copiers.
-            hash_with_hotkey = utils.get_hash_of_two_strings(model.id.hash, hotkey)
+            hash_with_hotkey = get_hash_of_two_strings(model.id.hash, hotkey)
             if hash_with_hotkey != metadata.id.hash:
                 bt.logging.trace(
                     f"Sync for hotkey {hotkey} failed. Hash of content downloaded from hugging face {model.id.hash} "
@@ -83,17 +82,13 @@ class ModelUpdater:
 
         # Check that the parameter count of the model is within allowed bounds.
         parameter_size = sum(p.numel() for p in model.pt_model.parameters())
-        parameter_limit = utils.get_model_criteria(metadata.block).max_model_parameters
-        if parameter_size > parameter_limit:
+        if parameter_size > constants.MAX_MODEL_PARAMETERS:
             bt.logging.trace(
                 f"Sync for hotkey {hotkey} failed. Parameter size of the model {parameter_size} exceeded max size {parameter_limit} at block {metadata.block}."
             )
             return False
 
-        allowed_model_types = utils.get_model_criteria(
-            metadata.block
-        ).allowed_model_types
-        if type(model.pt_model) not in allowed_model_types:
+        if type(model.pt_model) not in constants.ALLOWED_MODEL_TYPES:
             bt.logging.trace(
                 f"Sync for hotkey {hotkey} failed. Model type {type(model.pt_model)} is not allowed at block {metadata.block}."
             )
