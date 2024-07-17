@@ -1,8 +1,8 @@
 import asyncio
 import unittest
-from model import utils
 from model.data import Model, ModelId, ModelMetadata
 from model.model_tracker import ModelTracker
+from pretrain.mining import get_hash_of_two_string
 
 from model.model_updater import ModelUpdater
 from model.storage.disk.disk_model_store import DiskModelStore
@@ -182,7 +182,7 @@ class TestModelUpdater(unittest.TestCase):
         model_id_chain = ModelId(
             namespace="test_model",
             name="test_name",
-            hash=utils.get_hash_of_two_strings(model_hash, hotkey),
+            hash=get_hash_of_two_strings(model_hash, hotkey),
             commit="test_commit",
         )
         model_metadata = ModelMetadata(id=model_id_chain, block=1)
