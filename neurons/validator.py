@@ -256,13 +256,67 @@ class Validator:
         # Save the state of the tracker to file.
         self.model_tracker.save_state(self.tracker_filepath)
 
+    def check_top_models(self):
+        # At most once per `chain_update_cadence`, check which models are being assigned weight by
+        # the top validators and ensure they'll be evaluated soon.
+        now = dt.datetime.now()
+        if self.last_checked_top_models_time is not None and \
+                (now - self.last_checked_top_models_time) < constants.chain_update_cadence:
+            return
+
+        self.last_checked_top_models_time = now
+        with self.metagraph_lock:
+            metagraph = copy.deepcopy(self.metagraph)
+
+        # Find any miner UIDs which top valis are assigning weight and aren't currently scheduled for an eval.
+        top_miner_uids = set(utils.list_top_miners(metagraph))
+        with self.pending_uids_to_eval_lock:
+            uids_to_add = (
+                top_miner_uids
+                - self.uids_to_eval
+                - self.pending_uids_to_eval
+            )
+
+        for uid in uids_to_add:
+            # Limit how often we'll retry these top models.
+            time_diff = (
+                now - uid_last_retried_evaluation[uid]
+                if uid in uid_last_retried_evaluation
+                else constants.model_retry_cadence  # Default to being stale enough to check again.
+            )
+            if time_diff < constants.model_retry_cadence:
+                continue
+
+            try:
+                uid_last_retried_evaluation[uid] = now
+
+                # Redownload this model and schedule it for eval.
+                hotkey = metagraph.hotkeys[uid]
+                asyncio.run(
+                    self.model_updater.sync_model(hotkey, force=True)
+                )
+
+                # Since this is a top model (as determined by other valis),
+                # we don't worry if self.pending_uids is already "full". At most
+                # there can be 10 top models that we'd add here and that would be
+                # a wildy exceptional case. It would require every vali to have a
+                # different top model.
+                self.pending_uids_to_eval.add(uid)
+                bt.logging.debug(
+                    f"Retrying evaluation for previously discarded model with incentive for UID={uid}."
+                )
+            except Exception:
+                bt.logging.debug(
+                    f"Failure in update loop for UID={uid} during top model check. {traceback.format_exc()}"
+                )
+
     def update_models(self):
         """Updates the models in the local store based on the latest metadata from the chain."""
 
         # Track how recently we updated each uid from sequential iteration.
         uid_last_checked_sequential = dict()
         # Track how recently we checked the list of top models.
-        last_checked_top_models_time = None
+        self.last_checked_top_models_time = None
         # Track how recently we retried a model with incentive we've already dropped.
         uid_last_retried_evaluation = dict()
 
@@ -270,56 +324,7 @@ class Validator:
         # if they should be updated.
         while not self.stop_event.is_set():
             try:
-                # At most once per `chain_update_cadence`, check which models are being assigned weight by
-                # the top validators and ensure they'll be evaluated soon.
-                if (
-                    not last_checked_top_models_time
-                    or dt.datetime.now() - last_checked_top_models_time
-                    > constants.chain_update_cadence
-                ):
-                    last_checked_top_models_time = dt.datetime.now()
-                    with self.metagraph_lock:
-                        metagraph = copy.deepcopy(self.metagraph)
-
-                    # Find any miner UIDs which top valis are assigning weight and aren't currently scheduled for an eval.
-                    top_miner_uids = set(utils.list_top_miners(metagraph))
-                    with self.pending_uids_to_eval_lock:
-                        uids_to_add = (
-                            top_miner_uids
-                            - self.uids_to_eval
-                            - self.pending_uids_to_eval
-                        )
-
-                    for uid in uids_to_add:
-                        # Limit how often we'll retry these top models.
-                        time_diff = (
-                            dt.datetime.now() - uid_last_retried_evaluation[uid]
-                            if uid in uid_last_retried_evaluation
-                            else constants.model_retry_cadence  # Default to being stale enough to check again.
-                        )
-                        if time_diff >= constants.model_retry_cadence:
-                            try:
-                                uid_last_retried_evaluation[uid] = dt.datetime.now()
-
-                                # Redownload this model and schedule it for eval.
-                                hotkey = metagraph.hotkeys[uid]
-                                asyncio.run(
-                                    self.model_updater.sync_model(hotkey, force=True)
-                                )
-
-                                # Since this is a top model (as determined by other valis),
-                                # we don't worry if self.pending_uids is already "full". At most
-                                # there can be 10 top models that we'd add here and that would be
-                                # a wildy exceptional case. It would require every vali to have a
-                                # different top model.
-                                self.pending_uids_to_eval.add(uid)
-                                bt.logging.debug(
-                                    f"Retrying evaluation for previously discarded model with incentive for UID={uid}."
-                                )
-                            except Exception:
-                                bt.logging.debug(
-                                    f"Failure in update loop for UID={uid} during top model check. {traceback.format_exc()}"
-                                )
+                self.check_top_models()
 
                 # Top model check complete. Now continue with the sequential iterator to check for the next miner
                 # to update.
