@@ -1,7 +1,7 @@
 import bittensor as bt
 from typing import Optional
 import constants
-from pretrain.mining import get_hash_of_two_strings
+from model.model_utils import get_hash_of_two_strings
 from model.data import ModelMetadata
 from model.model_tracker import ModelTracker
 from model.storage.local_model_store import LocalModelStore

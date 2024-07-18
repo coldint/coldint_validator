@@ -16,6 +16,4 @@
 # DEALINGS IN THE SOFTWARE.
 
 from . import dataset
-from . import mining
-from . import model
 from . import validation

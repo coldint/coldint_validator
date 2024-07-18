@@ -31,9 +31,35 @@ from model.storage.model_metadata_store import ModelMetadataStore
 from model.storage.remote_model_store import RemoteModelStore
 import bittensor as bt
 from transformers import PreTrainedModel, AutoModelForCausalLM
-import pretrain as pt
 from safetensors.torch import load_model
 from utilities import utils
+from transformers import (
+    GPTNeoXConfig,
+    GPTNeoXForCausalLM,
+    GPT2TokenizerFast,
+)
+
+# 769_782_400 param model as a sample.
+def get_test_model():
+    config = GPTNeoXConfig(
+        vocab_size=10000,
+        num_attention_heads=40,
+        hidden_size=1600,
+        intermediate_size=6400,
+        num_hidden_layers=24,
+        max_position_embeddings=2048,
+    )
+    return GPTNeoXForCausalLM(config)
+
+
+def get_tokenizer(cache_dir: str = None):
+    """Return the default tokenizer"""
+    bt.logging.info(
+        "Getting gpt-4 tokenizer. Following logs about not matching GPT2TokenizerFast are expected."
+    )
+    tokenizer = GPT2TokenizerFast.from_pretrained("Xenova/gpt-4", cache_dir=cache_dir)
+    tokenizer.pad_token = tokenizer.eos_token
+    return tokenizer
 
 
 def get_hash_of_two_strings(string1: str, string2: str) -> str:
@@ -165,13 +191,6 @@ async def get_repo(
         raise ValueError(f"No model metadata found for miner {uid}")
 
     return utils.get_hf_url(model_metadata)
-
-
-def load_gpt2_model(model_file: str) -> PreTrainedModel:
-    """For loading GPT2 models from the previous version of this subnet."""
-    model = pt.model.get_model()
-    load_model(model, model_file)
-    return model
 
 
 def load_local_model(model_dir: str, use_bf16: bool = False) -> PreTrainedModel:

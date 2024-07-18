@@ -32,6 +32,7 @@ import requests
 
 import wandb
 import constants
+import model
 from model.data import ModelId
 from model.model_tracker import ModelTracker
 from model.model_updater import ModelUpdater
@@ -624,7 +625,7 @@ class Validator:
         uid_to_block = {uid: math.inf for uid in uids}
         bt.logging.debug(f'run_step() @ current block {self.current_block}')
 
-        tokenizer = pt.model.get_tokenizer(cache_dir=self.config.model_dir)
+        tokenizer = model.get_tokenizer(cache_dir=self.config.model_dir)
         dataloader = pt.dataset.SubsetFineWebEdu2Loader(
             batch_size=constants.batch_size,
             num_pages=self.config.pages_per_eval,

@@ -7,7 +7,7 @@ import unittest
 
 from model.data import Model, ModelId
 import pretrain as pt
-from pretrain.model import get_model
+from model import get_test_model
 from tests.model.storage.fake_model_metadata_store import FakeModelMetadataStore
 from tests.model.storage.fake_remote_model_store import FakeRemoteModelStore
 from tests.utils import assert_model_equality
@@ -21,7 +21,7 @@ class TestMining(unittest.TestCase):
         self.wallet.create_if_non_existent(
             coldkey_use_password=False, hotkey_use_password=False
         )
-        self.tiny_model = get_model()
+        self.tiny_model = get_test_model()
 
         self.model_dir = "test-models/test-mining"
         os.makedirs(name=self.model_dir, exist_ok=True)
