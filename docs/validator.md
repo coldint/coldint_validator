@@ -1,59 +1,14 @@
-# Validator 
+# Validator
 
-Validators download the models from hugging face for each miner based on the Bittensor chain metadata and continuously evaluate them, setting weights based on the performance of each model against the Falcon dataset. They also log results to [wandb](https://wandb.ai/opentensor-dev/pretraining-subnet).
+Validators download the models from hugging face for each miner based on the Bittensor chain metadata and continuously evaluate them, setting weights based on the performance of each model against the Fineweb-2 dataset. They also log results to [wandb](https://wandb.ai/coldint/sn29).
 
-You can view the entire validation system by reading the code in `neurons/validator.py`. Pseudocode for the validation system is as follows:
-```python
-    weights = zeros(256)
-    while True:
-        # Fetch random sample of batches to evaluate models on
-        batches = get_random_sample_of_batches_from_falcon()
-        
-        # Fetch and or update models.
-        models = get_and_update_models_from_miners()
-
-        # Compute losses for each batch and each model
-        model_losses = {}
-        for model in models:
-            for batch in batches:
-                loss = get_loss_for_model_on_batch( model, batch )
-                model_losses[ model ].append( loss )
-
-        # Compute wins for models.
-        model_wins = {}
-        for model_a in models:
-            for model_b in models:
-                for i in len( batches )
-                    # Determine if better model loss with relative block number boosting.
-                    if iswin( model_losses[ model_a ][ i ], model_losses[ model_b ][ i ], block_a, block_b ):
-                        model_wins[ model_a ] += 1
-                            
-        # End epoch.
-        # Weights are computed based on the ratio of wins a model attains during the epoch.
-        for model_i in models:
-            weights[ model_i ] += model_wins[ model_i ] / sum( model_wins.values() )
-        weights = softmax( weights / temperature, dim=0 )
-
-        # Set weights on the chain.
-        set_weights( weight )
-```
-
-The behaviour of `iswin( loss_a, loss_b, block_a, block_b)` function intentionally skews the win function to reward models which have been hosted earlier such that newer models are only better than others iff their loss is `epsilon` percent lower accoring to the following function. Currently `epsilon` is set to 1% and is a hyper parameter of the mechanism
-
-```python
-def iswin( loss_a, loss_b, block_a, block_b ):
-    loss_a = (1 - constants.timestamp_epsilon) * loss_a if block_a < block_b else loss_a
-    loss_b = (1 - constants.timestamp_epsilon) * loss_b if block_b < block_a else loss_b
-    return loss_a < loss_b
-```
-
-It is important to note that this affects the game theoretics of the incentive landscape since miners should only update their model (thus updating their timestamp to a newer date) if they have achieved an `epsilon` better loss on average on the Falcon Refined Web dataset than their previous model. This undermines the obvious optimal strategy for miners to copy the publicly available models from other miners. They **can** and should copy other miners, but they will always obtain fewer wins compared to them until they also decrease their loss by `epsilon`.
+You can view the entire validation system by reading the code in neurons/validator.py. SN29 has an improved scoring mechanism compared to the original pretraining subnet.
 
 # System Requirements
 
-Validators will need enough disk space to store the models of miners being evaluated. Each model has a max size by block defined in [constants/__init__.py](https://github.com/macrocosm-os/pretraining/blob/main/constants/__init__.py#L57) and the validator has cleanup logic to remove old models. It is recommended to have at least 1 TB of disk space.
+Validators will need enough disk space to store the models of miners being evaluated. There is a maximum model size, currently ~15GB and 6.9B parameters, defined in [constants/\_\_init\_\_.py](../constants/__init__.py) and the validator has cleanup logic to remove old models. It is recommended to have at least 1 TB of disk space.
 
-Validators will need enough processing power to evaluate their model. As of Apr 1st, 2024 it is required to have a GPU that supports [flash attention 2](https://github.com/Dao-AILab/flash-attention) with atleast 48 GB of VRAM and at least 38 TFLOPs for half precision (bfloat 16) operations.
+Validators will need enough processing power to evaluate their model, an RTX4090 (with 24GB RAM) is the minimum recommend GPU.
 
 # Getting Started
 
@@ -62,14 +17,14 @@ Validators will need enough processing power to evaluate their model. As of Apr 
 1. Clone the repo
 
 ```shell
-git clone https://github.com/macrocosm-os/pretraining.git
+git clone https://github.com/coldint/coldint_validator.git
 ```
 
 2. Setup your python [virtual environment](https://docs.python.org/3/library/venv.html) or [Conda environment](https://conda.io/projects/conda/en/latest/user-guide/tasks/manage-environments.html#creating-an-environment-with-commands).
 
 3. Install the requirements. From your virtual environment, run
 ```shell
-cd pretraining
+cd condint_validator
 python -m pip install -e .
 ```
 
@@ -83,15 +38,10 @@ pip install torch
 4. Make sure you've [created a Wallet](https://docs.bittensor.com/getting-started/wallets) and [registered a hotkey](https://docs.bittensor.com/subnets/register-and-participate).
 
 5. (Optional) Run a Subtensor instance:
+Your node will run better if you are connecting to a local Bittensor chain entrypoint node rather than using Opentensor's.
+We recommend running a local node as follows and passing the `--subtensor.network local` flag to your running miners/validators.
+To install and run a local subtensor node follow the instructions on [the GitHub page of subtensor](https://github.com/opentensor/subtensor).
 
-Your node will run better if you are connecting to a local Bittensor chain entrypoint node rather than using Opentensor's. 
-We recommend running a local node as follows and passing the ```--subtensor.network local``` flag to your running miners/validators. 
-To install and run a local subtensor node follow the commands below with Docker and Docker-Compose previously installed.
-```bash
-git clone https://github.com/opentensor/subtensor.git
-cd subtensor
-docker compose up --detach
-```
 ---
 
 # Running the Validator
@@ -107,10 +57,10 @@ Prerequisites:
 
 From the pretraining folder:
 ```shell
-pm2 start --name net9-vali-updater --interpreter python scripts/start_validator.py -- --pm2_name net9-vali --wallet.name coldkey --wallet.hotkey hotkey [other vali flags]
+pm2 start --name net29-vali-updater --interpreter python scripts/start_validator.py -- --pm2_name net29-vali --wallet.name coldkey --wallet.hotkey hotkey [other vali flags]
 ```
 
-This will start a process called `net9-vali-updater`. This process periodically checks for a new git commit on the current branch. When one is found, it performs a `pip install` for the latest packages, and restarts the validator process (who's name is given by the `--pm2_name` flag)
+This will start a process called `net29-vali-updater`. This process periodically checks for a new git commit on the current branch. When one is found, it performs a `pip install` for the latest packages, and restarts the validator process (who's name is given by the `--pm2\_name` flag)
 
 ## Without auto-updates
 
@@ -136,9 +86,9 @@ python ./neurons/validator.py -h
 
 Test running validation:
 ```shell
-python neurons/validator.py 
+python neurons/validator.py
     --wallet.name YOUR_WALLET_NAME
-    --wallet.hotkey YOUR_WALLET_HOTKEY 
+    --wallet.hotkey YOUR_WALLET_HOTKEY
     --device YOUR_CUDA DEVICE
     --wandb.off
     --offline
