@@ -71,6 +71,9 @@ REWARDS_DECAY_FACTOR    = 0.995
 # so: initial value equals total reward divided by REWARDS_IV_FACTOR
 REWARDS_IV_FACTOR       = 1 / (1 - REWARDS_DECAY_FACTOR)
 
+# Weights are deduced from win rates, by raising to this power and normalizing
+WEIGHT_SKEW_FACTOR      = 1.2
+
 # validator weight moving average term
 weight_alpha = 0.5
 

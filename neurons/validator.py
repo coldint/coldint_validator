@@ -704,8 +704,12 @@ class Validator:
             bt.logging.warning("compute_wins() returned no result")
             return
 
-        win_rate = win_info['win_rate']
-        self.update_weights(uids, win_rate)
+        # Skew weight distribution towards models with high win_rate
+        win_rate = np.array([win_info['win_rate'][uid] for uid in uids])
+        model_weights = win_rate**constants.WEIGHT_SKEW_FACTOR
+        model_weights /= np.sum(model_weights)
+        model_weights = {uid: weight for uid, weight in zip(uids, model_weights)}
+        self.update_weights(uids, model_weights)
 
         # Model sort order: by weight if >= 0.001, win-rate otherwise
         model_prio = {
@@ -715,7 +719,7 @@ class Validator:
                 if self.weights[uid].item() >= 0.001
                 else wr
             )
-            for uid, wr in win_rate.items()
+            for uid, wr in win_info['win_rate'].items()
         }
         self.uids_to_eval = set(sorted(model_prio, key=model_prio.get, reverse=True)[:self.config.sample_min])
 
