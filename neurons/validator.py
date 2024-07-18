@@ -745,8 +745,12 @@ class Validator:
         # Increment the number of completed run steps by 1
         self.run_step_count += 1
 
-    def print_win_matrix(self, matrix, benchmark_cfg=None):
-        table = Table(title="Model win matrix, true wins/adv wins/avg delta loss")
+    def print_win_matrix(self, matrix, benchmark_cfg=None, show_delta_loss=False):
+        if show_delta_loss:
+            title = "Model win matrix, true wins/adv wins/avg delta loss"
+        else:
+            title = "Model win matrix, true wins/adv wins"
+        table = Table(title=title)
         table.add_column("win \ lose", justify="right", style="cyan", no_wrap=True)
         for uid in matrix:
             table.add_column(f'UID {uid}')
@@ -760,7 +764,10 @@ class Validator:
                 if uid_a==uid_b:
                     val = '...'
                 elif wins is not None:
-                    val = f'{wins["wins"]}/{wins["wins_adv"]}/{wins["loss"]:.01f}'
+                    if show_delta_loss:
+                        val = f'{wins["wins"]}/{wins["wins_adv"]}/{wins["loss"]:.01f}'
+                    else:
+                        val = f'{wins["wins"]}/{wins["wins_adv"]}'
                 vals.append(val)
             table.add_row(*vals)
         console = Console()
@@ -813,7 +820,7 @@ class Validator:
                 table.add_row(
                     str(uid),
                     f"{d['loss_avg']:.04f}+-{d['loss_std']:.04f}",
-                    f"{d['adv_factor']:.03f}",
+                    f"{d['adv_factor']:.03f} of {100*constants.advantage_initial:.03f}",
                     str(round(d["win_rate"], 4)),
                     str(d["win_total"]),
                     str(round(self.weights[uid].item(), 4)),
