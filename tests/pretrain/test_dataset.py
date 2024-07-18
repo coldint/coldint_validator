@@ -2,7 +2,8 @@ import unittest
 
 import numpy as np
 
-import pretrain as pt
+from model import model_utils
+from neurons import dataset
 from neurons import config
 
 # Get the config
@@ -17,10 +18,10 @@ def test_FineWeb_loader_page_copy():
     NUM_PAGES = 20
     
     # Load a tokenizer
-    tokenizer = pt.model.get_tokenizer(cache_dir=config.model_dir)    
+    tokenizer = model_utils.get_tokenizer(cache_dir=config.model_dir)
 
     # First dataloader
-    dataloader_1 = pt.dataset.SubsetFineWebEdu2Loader(
+    dataloader_1 = dataset.SubsetFineWebEdu2Loader(
         batch_size=4,
         sequence_length=4092,
         num_pages=NUM_PAGES,
@@ -31,7 +32,7 @@ def test_FineWeb_loader_page_copy():
 
 
     # Now create a second loader without automatic page loading
-    dataloader_2 = pt.dataset.SubsetFineWebEdu2Loader(
+    dataloader_2 = dataset.SubsetFineWebEdu2Loader(
         batch_size=4,
         sequence_length=4092,
         num_pages=None,
