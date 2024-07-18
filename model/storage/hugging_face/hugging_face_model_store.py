@@ -36,6 +36,7 @@ class HuggingFaceModelStore(RemoteModelStore):
             name=model.id.name,
             hash=model.id.hash,
             commit=commit_info.oid,
+            competition=model.id.competition,
         )
 
         # TODO consider skipping the redownload if a hash is already provided.
@@ -86,6 +87,7 @@ class HuggingFaceModelStore(RemoteModelStore):
             name=model_id.name,
             commit=model_id.commit,
             hash=model_hash,
+            competition=model_id.competition,
         )
 
         return Model(id=model_id_with_hash, pt_model=model)

@@ -120,8 +120,8 @@ async def main(config: bt.config):
         )
     else:
         parts = args.model_id.split(':')
-        if len(parts) != 4:
-            bt.logging.error(f"model_id format is user:repo:commithash:modelhash")
+        if len(parts) != 5:
+            bt.logging.error(f"model_id format is user:repo:commithash:modelhash:competition")
             return False
         model_id = ModelId.from_compressed_str(args.model_id)
         if model_id.to_compressed_str() != args.model_id:

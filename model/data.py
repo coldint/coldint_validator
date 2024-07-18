@@ -27,31 +27,46 @@ class ModelId(BaseModel):
     namespace: str = Field(
         description="Namespace where the model can be found. ex. Hugging Face username/org."
     )
-    name: str = Field(description="Name of the model.")
+    name: str = Field(
+        description="Name of the model."
+    )
 
     # When handling a model locally the commit and hash are not necessary.
     # Commit must be filled when trying to download from a remote store.
     commit: Optional[str] = Field(
-        description="Commit of the model. May be empty if not yet committed."
+        description="Commit of the model.",
+        default=None
     )
     # Hash is filled automatically when uploading to or downloading from a remote store.
-    hash: Optional[str] = Field(description="Hash of the trained model.")
+    hash: Optional[str] = Field(
+        description="Hash of the trained model.",
+        default=None
+    )
+
+    competition: Optional[str] = Field(
+        description="Competition the model is submitted to.",
+        default=None
+    )
 
     def to_compressed_str(self) -> str:
         """Returns a compressed string representation."""
-        return f"{self.namespace}:{self.name}:{self.commit}:{self.hash}"
+        return ':'.join([self.namespace,self.name,self.commit,self.hash,self.competition])
 
     @classmethod
     def from_compressed_str(cls, cs: str) -> Type["ModelId"]:
         """Returns an instance of this class from a compressed string representation"""
         tokens = cs.split(":")
-        return cls(
-            namespace=tokens[0],
-            name=tokens[1],
-            commit=tokens[2] if tokens[2] != "None" else None,
-            hash=tokens[3] if tokens[3] != "None" else None,
-        )
+        keys = 'namespace','name','commit','hash','competition'
+        if len(tokens) != len(keys):
+            raise Exception(f'expecting {len(keys)} elements, found {len(tokens)}, in compressed string {cs}')
+        return cls(**dict(zip(keys,tokens)))
 
+    @classmethod
+    def dummy(cls, identifier: str) -> Type["ModelId"]:
+        return cls(
+            namespace='dummy',
+            name=identifier,
+        )
 
 class Model(BaseModel):
     """Represents a pre trained foundation model."""
