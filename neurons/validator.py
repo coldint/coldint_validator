@@ -28,6 +28,7 @@ import torch
 import random
 import asyncio
 import numpy as np
+import requests
 
 import wandb
 import constants
@@ -175,6 +176,8 @@ class Validator:
         # Setup a model tracker to track which miner is using which model id.
         self.model_tracker = ModelTracker()
 
+        self.hall_of_fame = {}
+
         self.load_state()
 
         # Setup a miner iterator to ensure we update all miners.
@@ -313,8 +316,26 @@ class Validator:
                     f"Failure in update loop for UID={uid} during top model check. {traceback.format_exc()}"
                 )
 
+    def update_hall_of_fame(self):
+        now = time.time()
+        if self.last_hof_fetch is not None and \
+                (now - self.last_hof_fetch) < constants.HOF_FETCH_INTERVAL:
+            return
+        self.last_hof_fetch = now
+
+        try:
+            req = requests.get(constants.HOFF_URL)
+            self.hall_of_fame = req.json()
+            bt.logging.info(f"Fetched hall of fame content, containing {len(self.hall_of_fame)} entries")
+        except Exception as e:
+            bt.logging.error(f"Failed to fetch hall of fame: {e}")
+
+
     def update_models(self):
-        """Updates the models in the local store based on the latest metadata from the chain."""
+        """
+        Updates the models in the local store based on the latest metadata from the chain.
+        Periodically fetch hall of fame config json.
+        """
 
         # Track how recently we updated each uid from sequential iteration.
         uid_last_checked_sequential = dict()
@@ -322,11 +343,14 @@ class Validator:
         self.last_checked_top_models_time = None
         # Track how recently we retried a model with incentive we've already dropped.
         uid_last_retried_evaluation = dict()
+        # Track when we last fetched hall of fame
+        self.last_hof_fetch = None
 
         # The below loop iterates across all miner uids and checks to see
         # if they should be updated.
         while not self.stop_event.is_set():
             try:
+                self.update_hall_of_fame()
                 self.check_top_models()
 
                 # Top model check complete. Now continue with the sequential iterator to check for the next miner
@@ -512,11 +536,50 @@ class Validator:
         except asyncio.TimeoutError:
             bt.logging.error(f"Failed to run step after {ttl} seconds")
 
+    def get_reward_weights(self):
+        reward_weights = torch.zeros_like(self.weights)
+        with self.metagraph_lock:
+            metagraph = copy.deepcopy(self.metagraph)
+        current_block = metagraph.block.item()
+
+        for uid, hotkey in enumerate(metagraph.hotkeys):
+            if hotkey not in self.hall_of_fame:
+                continue
+            try:
+                for entry in self.hall_of_fame[hotkey]:
+                    delta_blocks = current_block - entry['block']
+                    delta_epochs = delta_blocks / constants.blocks_per_epoch
+                    iv = entry['reward'] / constants.REWARDS_IV_FACTOR
+                    reward_weights[uid] += iv * constants.REWARDS_DECAY_FACTOR**delta_epochs
+                    bt.logging.info(f"Rewarding UID {uid} / {hotkey} with weight {reward_weights[uid]:.04f} for '{entry.get('desc','')}'")
+            except Exception as e:
+                bt.logging.warning(f"Reward computation for UID {uid} / {hotkey} failed ({e})")
+
+        # Make sure total reward weight does not exceed BOUNTIES_MAX_FRACTION
+        total_weight = reward_weights.sum().item()
+        if total_weight > constants.REWARDS_MAX_FRACTION:
+            reward_weights *= constants.REWARDS_MAX_FRACTION / total_weight
+            total_weight = constants.REWARDS_MAX_FRACTION
+
+        return reward_weights, total_weight
+
     def update_weights(self, uids, model_weights):
+        '''
+        Update self.weights, based on uids and model_weights.
+        Up to constants.REWARDS_MAX_FRACTION part of the total weight will be based
+        on the hall of fame rewards settings.
+        '''
         new_weights = torch.zeros_like(self.weights)
+        reward_weights, reward_sum = self.get_reward_weights()
+        # Scale model weights down by (1 - reward_sum)
         for uid, weight in model_weights.items():
-            new_weights[uid] = weight
+            new_weights[uid] = (1 - reward_sum) * weight
+        # Add bounties
+        new_weights += reward_weights
+        # Normalize total, which should in principle already be the case
         new_weights /= new_weights.sum()
+
+        # First time around, use weights without EMA
         if self.weights.count_nonzero().item() == 0:
             self.weights = new_weights
         else:

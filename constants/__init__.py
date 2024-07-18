@@ -55,6 +55,19 @@ ALLOWED_MODEL_TYPES = {
 # The number of run steps to log to single wandb run.
 MAX_RUN_STEPS_PER_WANDB_RUN = 100
 
+# Hall of fame configuration
+HOF_URL                 = "https://github.com/coldint/sn29/raw/main/hall_of_fame.json"
+HOF_FETCH_INTERVAL      = 15*60
+
+# Maximum fraction of (miner) emissions for rewards
+REWARDS_MAX_FRACTION    = 0.4
+
+# Bounty decay factor, per epoch
+REWARDS_DECAY_FACTOR    = 0.995
+
+# Infinite sum of emissions will be initial value times this factor (200 for 0.995)
+# so: initial value equals total reward divided by REWARDS_IV_FACTOR
+REWARDS_IV_FACTOR       = 1 / (1 - REWARDS_DECAY_FACTOR)
 
 # validator weight moving average term
 weight_alpha = 0.5

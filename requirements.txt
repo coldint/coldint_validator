@@ -11,3 +11,4 @@ transformers
 wandb
 datasets
 flash-attn
+requests
