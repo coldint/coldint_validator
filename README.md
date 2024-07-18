@@ -11,28 +11,16 @@
 
 ---
 
-This subnet is born out of miner frustration on other subnets. Miners are incentivized, more than anyone else, to scrutinize the validator and the weighting logic, which can play a bigger role than the actual training that should form the core of the subnet.
-
-Once miners find flaws, however minor, in the validation logic, they are incentivized to optimize their mining efforts to maximize "exploiting" these flaws. The end result is that the subnet as a whole is not optimizing towards the stated goal - whatever it may be.
-
-Until now.
-
-SN29 attempts to add collaboration to the mix. Bittensor was already distributed, decentralized and incentivized, but it is hardly a collective effort when it comes to sharing knowledge and insights - while the largest real-world effects of Bittensor are perhaps mostly that: brainpower invested in making AI better, in whatever shape or form.
-
-See [coldint.io](https://coldint.io) for further detais.
-
-
-
 # Introduction
 Bittensor subnet 29 is focused on advancing collaborative, distributed model training and research, as well as sharing of innovative ideas regarding model structure, training and evaluation.
-It started as a fork of subnet 9 (pretraining), which was somewhat static and lacked the incentive to publish small advancements.
+It started as a fork of subnet 9 (pretraining), which was somewhat static and lacked the incentive to publish small improvements.
 See [Macrocosmos github](https://github.com/macrocosm-os/pretraining/releases/tag/v3.2.1) for the exact starting point.
 
 The following documentation assumes you are familiar with basic Bittensor concepts: Miners, Validators, and incentives. If you need a primer, please check out https://docs.bittensor.com/learn/bittensor-building-blocks.
 
 The initial competition rewards miners for improving model score on the [Fineweb-edu-2 dataset](https://huggingface.co/datasets/HuggingFaceFW/fineweb-edu-score-2).
 
-Next to that, miner rewards can also be earned by contributing code, bug-fixes or key suggestions or insights; see [coldint.io](https://coldint.io) for further detais.
+Miner rewards can also be earned by contributing code, bug-fixes or key suggestions or insights; see [coldint.io](https://coldint.io) for further detais.
 
 See the [Miner](docs/miner.md) and [Validator](docs/validator.md) docs for more information about how they work, as well as setup instructions.
 
@@ -40,11 +28,7 @@ See the [Miner](docs/miner.md) and [Validator](docs/validator.md) docs for more 
 
 ## Getting Started
 
-TL;DR:
-1. [Chat](https://discord.gg/bittensor)
-2. [Leaderboard](https://huggingface.co/spaces/macrocosm-os/pretraining-leaderboard)
-
-This repo's main conversation is carried out in the Bittensor [Discord](https://discord.gg/bittensor). Visit the 'pretraining' channel to ask questions and get real time feedback. You can view the ongoing running of the incentive mechanism, the best miners (see 'incentive'), the most in consensus validators (see 'vtrust') using this [taostats link](https://taostats.io/subnets/netuid-29/). The table shows all 256 participant UIDs with corresponding YC stats and earnings.
+This repo's main conversation is carried out in the Bittensor [Discord](https://discord.gg/bittensor). Visit the 'coldint' channel to ask questions and get real time feedback. You can view the ongoing running of the incentive mechanism, the best miners (see 'incentive'), the most in consensus validators (see 'vtrust') using this [taostats link](https://taostats.io/subnets/netuid-29/). The table shows all 256 participant UIDs with corresponding YC stats and earnings.
 
 See [Miner Setup](docs/miner.md#getting-started) to learn how to set up a Miner.
 
