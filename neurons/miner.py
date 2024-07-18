@@ -23,6 +23,7 @@
 import asyncio
 import math
 import os
+import sys
 import wandb
 import torch
 import random
@@ -356,6 +357,8 @@ async def main(config: bt.config):
 
 
 if __name__ == "__main__":
+    print('NOTICE: The base miner is left in this codebase for reference only. Remove this line if you want to actually run it.')
+    sys.exit(-1)
     # Parse and print configuration
     config = get_config()
     print(config)
