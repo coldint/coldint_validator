@@ -6,8 +6,7 @@ import bittensor as bt
 import unittest
 
 from model.data import Model, ModelId
-import pretrain as pt
-from model import get_test_model
+from model import model_utils
 from tests.model.storage.fake_model_metadata_store import FakeModelMetadataStore
 from tests.model.storage.fake_remote_model_store import FakeRemoteModelStore
 from tests.utils import assert_model_equality
@@ -21,7 +20,7 @@ class TestMining(unittest.TestCase):
         self.wallet.create_if_non_existent(
             coldkey_use_password=False, hotkey_use_password=False
         )
-        self.tiny_model = get_test_model()
+        self.tiny_model = model_utils.get_test_model()
 
         self.model_dir = "test-models/test-mining"
         os.makedirs(name=self.model_dir, exist_ok=True)
@@ -33,14 +32,14 @@ class TestMining(unittest.TestCase):
     def test_model_to_disk_roundtrip(self):
         """Tests that saving a model to disk and loading it gets the same model."""
 
-        pt.mining.save(model=self.tiny_model, model_dir=self.model_dir)
-        model = pt.mining.load_local_model(model_dir=self.model_dir)
+        model_utils.save(model=self.tiny_model, model_dir=self.model_dir)
+        model = model_utils.load_local_model(model_dir=self.model_dir)
 
         assert_model_equality(self, self.tiny_model, model)
 
     def _test_push(self, min_expected_block: int = 1):
         asyncio.run(
-            pt.mining.push(
+            model_utils.push(
                 model=self.tiny_model,
                 wallet=self.wallet,
                 repo="namespace/name",
@@ -95,7 +94,7 @@ class TestMining(unittest.TestCase):
 
         # The miner hasn't uploaded a model yet, so expect a ValueError.
         with self.assertRaises(ValueError):
-            await pt.mining.get_repo(
+            await model_utils.get_repo(
                 0, metagraph=metagraph, metadata_store=self.metadata_store
             )
 
@@ -111,7 +110,7 @@ class TestMining(unittest.TestCase):
         self.metadata_store.store_model_metadata(hotkey, model_id)
 
         self.assertEqual(
-            await pt.mining.get_repo(
+            await model_utils.get_repo(
                 0, metagraph=metagraph, metadata_store=self.metadata_store
             ),
             "https://huggingface.co/namespace/name/tree/commit",
