@@ -55,6 +55,8 @@ ALLOWED_MODEL_TYPES = {
 # The number of run steps to log to single wandb run.
 MAX_RUN_STEPS_PER_WANDB_RUN = 100
 
+COMPETITION_ID          = "c00"
+
 # Hall of fame configuration
 HOF_URL                 = "https://github.com/coldint/sn29/raw/main/hall_of_fame.json"
 HOF_FETCH_INTERVAL      = 15*60

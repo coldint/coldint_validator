@@ -44,6 +44,12 @@ class ModelUpdater:
             )
             return False
 
+        if metadata.id.competition != constants.COMPETITION_ID:
+            bt.logging.trace(
+                f"Hotkey {hotkey} advertized model for invalid competition {metadata.id.competition}"
+            )
+            return False
+
         # Check what model id the model tracker currently has for this hotkey.
         tracker_model_metadata = self.model_tracker.get_model_metadata_for_miner_hotkey(
             hotkey
