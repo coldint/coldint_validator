@@ -651,10 +651,10 @@ class Validator:
                 # Model data from dynamic config
                 bcfg = benchmark_cfg[uid]
                 hotkey = bcfg.get("hotkey", "xxx")
+                model_path = bcfg.get('path', 'please specify path')
                 model_i_metadata = Container()
                 model_i_metadata.block = bcfg.get("block", 1<<31)
-                model_i_metadata.id = ModelId.from_compressed_str(bcfg.get("modelid", "sr:mdl:mhash:usrkey"))
-                model_path = bcfg.get('path', 'please specify path')
+                model_i_metadata.id = ModelId.dummy(bcfg.get('identifier',model_path))
             elif uid < len(self.metagraph.hotkeys):
                 # Model from chain
                 hotkey = self.metagraph.hotkeys[uid]
