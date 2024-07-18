@@ -32,7 +32,9 @@ import requests
 
 import wandb
 import constants
-import model
+import dataset
+import validation
+from model import model_utils
 from model.data import ModelId
 from model.model_tracker import ModelTracker
 from model.model_updater import ModelUpdater
@@ -47,7 +49,6 @@ from rich.table import Table
 from rich.console import Console
 
 import bittensor as bt
-import pretrain as pt
 from utilities.miner_iterator import MinerIterator
 from utilities import utils
 from utilities.perf_monitor import PerfMonitor
@@ -325,7 +326,8 @@ class Validator:
         self.last_hof_fetch = now
 
         try:
-            req = requests.get(constants.HOFF_URL)
+            req = requests.get(constants.HOF_URL)
+            req.raise_for_status()
             self.hall_of_fame = req.json()
             bt.logging.info(f"Fetched hall of fame content, containing {len(self.hall_of_fame)} entries")
         except Exception as e:
@@ -625,8 +627,8 @@ class Validator:
         uid_to_block = {uid: math.inf for uid in uids}
         bt.logging.debug(f'run_step() @ current block {self.current_block}')
 
-        tokenizer = model.get_tokenizer(cache_dir=self.config.model_dir)
-        dataloader = pt.dataset.SubsetFineWebEdu2Loader(
+        tokenizer = model_utils.get_tokenizer(cache_dir=self.config.model_dir)
+        dataloader = dataset.SubsetFineWebEdu2Loader(
             batch_size=constants.batch_size,
             num_pages=self.config.pages_per_eval,
             tokenizer=tokenizer,
@@ -675,7 +677,7 @@ class Validator:
                     with compute_loss_perf.sample():
                         losses = utils.run_in_subprocess(
                             functools.partial(
-                                pt.validation.compute_losses,
+                                validation.compute_losses,
                                 model_i.pt_model,
                                 batches,
                                 self.config.device,
@@ -697,7 +699,7 @@ class Validator:
             losses_per_uid[uid] = losses
             bt.logging.debug(f"Losses for uid:{uid}: {np.nanmean(losses):.03f} +- {np.nanstd(losses):.03f}")
 
-        win_info = pt.validation.compute_wins(losses_per_uid, uid_to_block, self.current_block)
+        win_info = validation.compute_wins(losses_per_uid, uid_to_block, self.current_block)
         if 'win_rate' not in win_info:
             bt.logging.warning("compute_wins() returned no result")
             return

@@ -28,11 +28,12 @@ import torch
 import random
 import argparse
 import constants
+import dataset
+from model import model_utils
 from model.storage.chain.chain_model_metadata_store import ChainModelMetadataStore
 from model.storage.hugging_face.hugging_face_model_store import HuggingFaceModelStore
 from model.storage.model_metadata_store import ModelMetadataStore
 from model.storage.remote_model_store import RemoteModelStore
-import pretrain as pt
 import bittensor as bt
 from transformers import PreTrainedModel
 from utilities import utils
@@ -218,7 +219,7 @@ async def main(config: bt.config):
 
     # Create a unique run id for this run.
     run_id = dt.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    model_dir = model.model_path(config.model_dir, run_id)
+    model_dir = model_utils.model_path(config.model_dir, run_id)
     os.makedirs(model_dir, exist_ok=True)
 
     use_wandb = False
@@ -282,7 +283,7 @@ async def main(config: bt.config):
     global_step = 0
     n_acc_steps = 0
     accumulation_steps = config.accumulation_steps
-    tokenizer = pt.model.get_tokenizer()
+    tokenizer = model_utils.get_tokenizer()
 
     try:
         while epoch_step < config.num_epochs or config.num_epochs == -1:
@@ -293,7 +294,7 @@ async def main(config: bt.config):
             bt.logging.success(
                 f"Loading {config.pages_per_epoch} pages for training this epoch"
             )
-            loader = pt.dataset.SubsetFineWebEdu2Loader(
+            loader = dataset.SubsetFineWebEdu2Loader(
                 batch_size=config.bs,
                 sequence_length=config.sl,
                 num_pages=config.pages_per_epoch,
