@@ -191,9 +191,16 @@ def load_local_model(model_dir: str, use_bf16: bool = False) -> PreTrainedModel:
         )
 
 
+def best_uid(metagraph: Optional[bt.metagraph] = None) -> int:
+    """Returns the best performing UID in the metagraph."""
+    if not metagraph:
+        metagraph = bt.subtensor().metagraph(constants.SUBNET_UID)
+    return max(range(metagraph.n), key=lambda uid: metagraph.I[uid].item())
+
+
 async def load_best_model(download_dir: str):
     """Loads the model from the best performing miner to download_dir"""
-    best_uid = pt.graph.best_uid()
+    best_uid = best_uid()
     return await load_remote_model(best_uid, download_dir)
 
 

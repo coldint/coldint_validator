@@ -174,7 +174,7 @@ def get_best_model_provider(
     """
     subtensor = bt.subtensor(config=config)
     metagraph = subtensor.metagraph(netuid=constants.SUBNET_UID)
-    best_uid = pt.graph.best_uid(metagraph=metagraph)
+    best_uid = pt.mining.best_uid(metagraph=metagraph)
     hotkey = metagraph.hotkeys[best_uid]
 
     metagraph_store = ChainModelMetadataStore(subtensor)
