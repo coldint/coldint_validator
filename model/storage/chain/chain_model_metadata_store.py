@@ -25,29 +25,36 @@ class ChainModelMetadataStore(ModelMetadataStore):
         )
         self.subnet_uid = subnet_uid
 
-    async def store_model_metadata(self, hotkey: str, model_id: ModelId):
+    async def store_model_metadata(self, hotkey: str, model_id: ModelId, backgrounded=False):
         """Stores model metadata on this subnet for a specific wallet."""
         if self.wallet is None:
             raise ValueError("No wallet available to write to the chain.")
 
-        # Wrap calls to the subtensor in a subprocess with a timeout to handle potential hangs.
-        partial = functools.partial(
-            self.subtensor.commit,
-            self.wallet,
-            self.subnet_uid,
-            model_id.to_compressed_str(),
-        )
-        utils.run_in_subprocess(partial, 60)
+        if backgrounded:
+            # Wrap calls to the subtensor in a subprocess with a timeout to handle potential hangs.
+            # This does seem to kill the subtensor connection...
+            partial = functools.partial(
+                self.subtensor.commit,
+                self.wallet,
+                self.subnet_uid,
+                model_id.to_compressed_str(),
+            )
+            utils.run_in_subprocess(partial, 60)
+        else:
+            self.subtensor.commit(self.wallet,self.subnet_uid,model_id.to_compressed_str())
 
-    async def retrieve_model_metadata(self, hotkey: str) -> Optional[ModelMetadata]:
+    async def retrieve_model_metadata(self, hotkey: str, backgrounded=False) -> Optional[ModelMetadata]:
         """Retrieves model metadata on this subnet for specific hotkey"""
 
-        # Wrap calls to the subtensor in a subprocess with a timeout to handle potential hangs.
-        partial = functools.partial(
-            bt.extrinsics.serving.get_metadata, self.subtensor, self.subnet_uid, hotkey
-        )
+        if backgrounded:
+            # Wrap calls to the subtensor in a subprocess with a timeout to handle potential hangs.
+            partial = functools.partial(
+                bt.extrinsics.serving.get_metadata, self.subtensor, self.subnet_uid, hotkey
+            )
 
-        metadata = utils.run_in_subprocess(partial, 180)
+            metadata = utils.run_in_subprocess(partial, 180)
+        else:
+            metadata = bt.extrinsics.serving.get_metadata(self.subtensor, self.subnet_uid, hotkey)
 
         if not metadata:
             return None
