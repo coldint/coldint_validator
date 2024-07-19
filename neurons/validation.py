@@ -91,8 +91,8 @@ def compute_wins(
     for uid_a, uid_b in itertools.product(uids_sorted, uids_sorted):
         matrix[uid_a][uid_b] = {
             'loss': np.mean(losses_per_uid[uid_a] - losses_per_uid[uid_b]),
-            'wins': np.sum(losses_per_uid[uid_a] <= losses_per_uid[uid_b]),
-            'wins_adv': np.sum(uid_advantage_factors[uid_a] * losses_per_uid[uid_a] <= losses_per_uid[uid_b]),
+            'wins': np.sum(losses_per_uid[uid_a] < losses_per_uid[uid_b]),
+            'wins_adv': np.sum(uid_advantage_factors[uid_a] * losses_per_uid[uid_a] < losses_per_uid[uid_b]),
         }
 
     return dict(wins=wins, win_rate=win_fractions, advantage_factors=uid_advantage_factors, matrix=matrix)
