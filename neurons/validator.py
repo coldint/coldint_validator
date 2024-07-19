@@ -487,10 +487,12 @@ class Validator:
                 bt.logging.warning("Failed to set weights. Trying again later.")
 
             ws, ui = self.weights.topk(len(self.weights))
-            table = Table(title="All Weights")
+            table = Table(title="All non-zero weights")
             table.add_column("uid", justify="right", style="cyan", no_wrap=True)
             table.add_column("weight", style="magenta")
             for index, weight in list(zip(ui.tolist(), ws.tolist())):
+                if weight == 0:
+                    continue
                 table.add_row(str(index), str(round(weight, 4)))
             console = Console()
             console.print(table)
