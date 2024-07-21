@@ -104,6 +104,11 @@ class SubsetFineWebEdu2Loader(IterableDataset):
                 return True
             
             except requests.exceptions.RequestException as e:
+                if response.status_code == 500:
+                    # Internal Server Errors are seen regularly (2024-07-21) for particular pages.
+                    # Retry does not help, so don't bother, and don't complain loudly.
+                    bt.logging.warning(f"skipping page: {e}")
+                    return False
                 attempt += 1
                 bt.logging.warning(
                     f"Failed to fetch {page_info}: {e}, {response_json}, retrying ({attempt}/{self.retry_limit})"

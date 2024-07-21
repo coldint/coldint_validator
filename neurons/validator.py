@@ -640,6 +640,11 @@ class Validator:
 
         bt.logging.debug(f"Computing losses on {uids} with {len(batches)} batches from pages {dataloader.pages}")
 
+        if len(batches) == 0:
+            bt.logging.warning(f"No samples to eval. Waiting one minute before retrying.")
+            time.sleep(60)
+            return
+
         # Compute model losses on batches.
         losses_per_uid = {muid: None for muid in uids}
 
