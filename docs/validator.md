@@ -14,30 +14,29 @@ Validators will need enough processing power to evaluate their model, an RTX4090
 
 ## Prerequisites
 
-1. Clone the repo
+1. Clone the repo, setup venv and install requirements
 
 ```shell
+# Clone repo
 git clone https://github.com/coldint/coldint_validator.git
-```
-
-2. Setup your python [virtual environment](https://docs.python.org/3/library/venv.html) or [Conda environment](https://conda.io/projects/conda/en/latest/user-guide/tasks/manage-environments.html#creating-an-environment-with-commands).
-
-3. Install the requirements. From your virtual environment, run
-```shell
 cd condint_validator
-python -m pip install -e .
-```
 
-Note: flash-attn may not have their dependencies set up correctly. If you run into issues try installing those requirements separately first:
-```shell
+# Setup venv
+python -m venv coldint_venv
+. coldint_venv/bin/activate
+
+# Pre-install several packages, there are some dependency issues
 pip install packaging
 pip install wheel
 pip install torch
+
+# Install package including requirements
+pip install -e .
 ```
 
-4. Make sure you've [created a Wallet](https://docs.bittensor.com/getting-started/wallets) and [registered a hotkey](https://docs.bittensor.com/subnets/register-and-participate).
+2. Make sure you've [created a Wallet](https://docs.bittensor.com/getting-started/wallets) and [registered a hotkey](https://docs.bittensor.com/subnets/register-and-participate).
 
-5. (Optional) Run a Subtensor instance:
+3. (Optional) Run a Subtensor instance:
 Your node will run better if you are connecting to a local Bittensor chain entrypoint node rather than using Opentensor's.
 We recommend running a local node as follows and passing the `--subtensor.network local` flag to your running miners/validators.
 To install and run a local subtensor node follow the instructions on [the GitHub page of subtensor](https://github.com/opentensor/subtensor).
