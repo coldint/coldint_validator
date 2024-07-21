@@ -61,13 +61,13 @@ with codecs.open(
     version_string = version_match.group(1)
 
 setup(
-    name="pretrain-subnet",
+    name="coldint-validator",
     version=version_string,
-    description="pretrain bittensor subnet",
+    description="Coldint bittensor subnet 29",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/unconst/pretrain-subnet",
-    author="bittensor.com",  # TODO(developer): Change this value to your module subnet author name.
+    url="https://github.com/coldint/coldint_validator",
+    author="https://coldint.io",
     packages=find_packages(),
     include_package_data=True,
     author_email="",
@@ -75,7 +75,7 @@ setup(
     python_requires=">=3.8",
     install_requires=requirements,
     classifiers=[
-        "Development Status :: 3 - Alpha",
+        "Development Status :: Beta",
         "Intended Audience :: Developers",
         "Topic :: Software Development :: Build Tools",
         # Pick your license as you wish
