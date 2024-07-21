@@ -19,7 +19,7 @@ Validators will need enough processing power to evaluate their model, an RTX4090
 ```shell
 # Clone repo
 git clone https://github.com/coldint/coldint_validator.git
-cd condint_validator
+cd coldint_validator
 
 # Setup venv
 python -m venv coldint_venv
@@ -59,7 +59,7 @@ From the pretraining folder:
 pm2 start --name net29-vali-updater --interpreter python scripts/start_validator.py -- --pm2_name net29-vali --wallet.name coldkey --wallet.hotkey hotkey [other vali flags]
 ```
 
-This will start a process called `net29-vali-updater`. This process periodically checks for a new git commit on the current branch. When one is found, it performs a `pip install` for the latest packages, and restarts the validator process (who's name is given by the `--pm2\_name` flag)
+This will start a process called `net29-vali-updater`. This process periodically checks for a new git commit on the current branch. When one is found, it performs a `pip install` for the latest packages, and restarts the validator process (who's name is given by the `--pm2_name` flag)
 
 ## Without auto-updates
 
