@@ -479,7 +479,7 @@ class Validator:
                     netuid=self.config.netuid,
                     wallet=self.wallet,
                     uids=self.metagraph.uids,
-                    weights=self.weights,
+                    weights=self.weights[:len(self.metagraph.uids)],
                     wait_for_inclusion=False,
                     version_key=constants.weights_version_key,
                 )
