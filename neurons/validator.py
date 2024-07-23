@@ -278,6 +278,7 @@ class Validator:
 
         # Find any miner UIDs which top valis are assigning weight and aren't currently scheduled for an eval.
         top_miner_uids = set(utils.list_top_miners(metagraph))
+        bt.logging.info(f"Top miners: {top_miner_uids}")
         with self.pending_uids_to_eval_lock:
             uids_to_add = (
                 top_miner_uids
@@ -288,15 +289,15 @@ class Validator:
         for uid in uids_to_add:
             # Limit how often we'll retry these top models.
             time_diff = (
-                now - uid_last_retried_evaluation[uid]
-                if uid in uid_last_retried_evaluation
+                now - self.uid_last_retried_evaluation[uid]
+                if uid in self.uid_last_retried_evaluation
                 else constants.model_retry_cadence  # Default to being stale enough to check again.
             )
             if time_diff < constants.model_retry_cadence:
                 continue
 
             try:
-                uid_last_retried_evaluation[uid] = now
+                self.uid_last_retried_evaluation[uid] = now
 
                 # Redownload this model and schedule it for eval.
                 hotkey = metagraph.hotkeys[uid]
@@ -345,7 +346,7 @@ class Validator:
         # Track how recently we checked the list of top models.
         self.last_checked_top_models_time = None
         # Track how recently we retried a model with incentive we've already dropped.
-        uid_last_retried_evaluation = dict()
+        self.uid_last_retried_evaluation = dict()
         # Track when we last fetched hall of fame
         self.last_hof_fetch = None
 
