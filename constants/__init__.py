@@ -74,6 +74,9 @@ REWARDS_IV_FACTOR       = 1 / (1 - REWARDS_DECAY_FACTOR)
 # Weights are deduced from win rates, by raising to this power and normalizing
 WEIGHT_SKEW_FACTOR      = 1.2
 
+# Fraction of weight to be considered a top miner on other validator (and re-evaluated once in a while)
+TOP_MINER_FRACTION      = 0.2
+
 # validator weight moving average term
 weight_alpha = 0.5
 

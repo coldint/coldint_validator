@@ -5,6 +5,7 @@ import time
 import resource
 from typing import Any, List, Optional, Tuple
 import bittensor as bt
+import constants
 
 from model.data import ModelId, ModelMetadata
 
@@ -154,7 +155,7 @@ def list_top_miners(metagraph: bt.metagraph) -> List[int]:
         total_weight = sum(weight for _, weight in weights)
 
         # Only look for miners with at least half the weight from this vali
-        threshold = total_weight / 2.0
+        threshold = constants.TOP_MINER_FRACTION * total_weight
         for uid, weight in weights:
             if weight > threshold:
                 top_miners.add(uid)
