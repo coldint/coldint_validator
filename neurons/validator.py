@@ -449,7 +449,9 @@ class Validator:
                 hotkeys_to_keep = set()
                 with self.metagraph_lock:
                     for uid in uids_to_keep:
-                        hotkeys_to_keep.add(self.metagraph.hotkeys[uid])
+                        # Injected models might not be in metagraph
+                        if uid < len(self.metagraph.hotkeys):
+                            hotkeys_to_keep.add(self.metagraph.hotkeys[uid])
 
                 # Only keep those hotkeys.
                 evaluated_hotkeys_to_model_id = {
@@ -463,7 +465,7 @@ class Validator:
                     grace_period_seconds=300,
                 )
             except Exception as e:
-                bt.logging.error(f"Error in clean loop: {e}")
+                bt.logging.error(f"Error in clean loop: {e}, {traceback.format_exc()}")
 
             # Only check every 5 minutes.
             time.sleep(dt.timedelta(minutes=5).total_seconds())
