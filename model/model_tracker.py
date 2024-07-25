@@ -23,20 +23,19 @@ class ModelTracker:
         # One for the downloading new models loop and one for the validating models loop.
         self.lock = threading.RLock()
 
-    def save_state(self, filepath):
-        """Save the current state to the provided filepath."""
-
-        # Open a writable binary file for pickle.
+    def get_state(self):
         with self.lock:
-            with open(filepath, "wb") as f:
-                pickle.dump(self.miner_hotkey_to_model_metadata_dict, f)
+            return {
+                hotkey: meta.dict()
+                    for hotkey, meta in self.miner_hotkey_to_model_metadata_dict.items()
+            }
 
-    def load_state(self, filepath):
-        """Load the state from the provided filepath."""
-
-        # Open a readable binary file for pickle.
-        with open(filepath, "rb") as f:
-            self.miner_hotkey_to_model_metadata_dict = pickle.load(f)
+    def set_state(self, state):
+        with self.lock:
+            self.miner_hotkey_to_model_metadata_dict = {
+                hotkey: ModelMetadata(**info)
+                    for hotkey, info in state.items()
+            }
 
     def get_miner_hotkey_to_model_metadata_dict(self) -> Dict[str, ModelMetadata]:
         """Returns the mapping from miner hotkey to model metadata."""
