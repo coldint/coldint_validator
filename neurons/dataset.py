@@ -163,6 +163,28 @@ class SubsetFineWebEdu2Loader(IterableDataset):
             self.fetch_page(page, pack=False, tokenize=False)
         return self.buffer
 
+    def tokenize(self, tokenizer, max_len=0):
+        """
+        Return batches, as tokenized using <tokenizer>
+        """
+        if type(tokenizer) is str:
+            bt.logging.info(f"Loading tokenizer {tokenizer}")
+            tokenizer = AutoTokenizer.from_pretrained(tokenizer)
+        batches = []
+        for irow, row in enumerate(self.buffer):
+            ids = tokenizer(row, truncation=False)["input_ids"]
+            repro = tokenizer.decode(ids)
+            if repro != row:
+                raise ValueError(f"Tokenizer did not map back to original for sample {irow}")
+
+            if max_len and len(ids) > max_len:
+                ids = ids[:max_len]
+            else:
+                ids += [tokenizer.eos_token_id]
+            batches.append(torch.tensor([ids]))
+
+        return batches
+
     def fetch_dataset_configs(self) -> typing.Dict[str, typing.Dict]:
         """
         Fetch the different dump names, aka configs, aka samples, of the
