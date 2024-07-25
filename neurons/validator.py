@@ -29,6 +29,8 @@ import random
 import asyncio
 import numpy as np
 import requests
+import sys
+import transformers
 
 import wandb
 import constants
@@ -53,6 +55,8 @@ import bittensor as bt
 from utilities.miner_iterator import MinerIterator
 from utilities import utils
 from utilities.perf_monitor import PerfMonitor
+
+TRANSFORMERS_VERSION_MIN     = "4.41.2"
 
 os.environ["TOKENIZERS_PARALLELISM"] = "true"
 
@@ -931,4 +935,8 @@ class Validator:
 
 
 if __name__ == "__main__":
+    if transformers.__version__ < TRANSFORMERS_VERSION_MIN:
+        bt.logging.error(f"Transformers version >= {TRANSFORMERS_VERSION_MIN} required")
+        sys.exit()
+
     asyncio.run(Validator().run())
