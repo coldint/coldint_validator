@@ -159,8 +159,6 @@ def list_top_miners(metagraph: bt.metagraph) -> List[int]:
         for uid, weight in weights:
             if weight > threshold:
                 top_miners.add(uid)
-                # Break now because only 1 miner can have more than half the weight.
-                break
 
     return list(top_miners)
 
