@@ -52,16 +52,6 @@ def get_test_model():
     return GPTNeoXForCausalLM(config)
 
 
-def get_tokenizer(cache_dir: str = None):
-    """Return the default tokenizer"""
-    bt.logging.info(
-        "Getting gpt-4 tokenizer. Following logs about not matching GPT2TokenizerFast are expected."
-    )
-    tokenizer = GPT2TokenizerFast.from_pretrained("Xenova/gpt-4", cache_dir=cache_dir)
-    tokenizer.pad_token = tokenizer.eos_token
-    return tokenizer
-
-
 def get_hash_of_two_strings(string1: str, string2: str) -> str:
     """Hashes two strings together and returns the result."""
 
