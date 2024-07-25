@@ -1,6 +1,7 @@
 import bittensor as bt
 from typing import Optional
 import constants
+from model import competitions
 from model.model_utils import get_hash_of_two_strings
 from model.data import ModelMetadata
 from model.model_tracker import ModelTracker
@@ -18,11 +19,16 @@ class ModelUpdater:
         remote_store: RemoteModelStore,
         local_store: LocalModelStore,
         model_tracker: ModelTracker,
+        comps: dict,
     ):
         self.metadata_store = metadata_store
         self.remote_store = remote_store
         self.local_store = local_store
         self.model_tracker = model_tracker
+        self.competitions = comps
+
+    def set_competitions(self, comp):
+        self.competitions = comp
 
     async def _get_metadata(self, hotkey: str) -> Optional[ModelMetadata]:
         """Get metadata about a model by hotkey"""
@@ -35,6 +41,11 @@ class ModelUpdater:
            hotkey (str): The hotkey of the model to sync.
            force (bool): Whether to force a sync for this model, even if it's chain metadata hasn't changed.
         """
+
+        if self.competitions is None:
+            bt.logging.debug("Competitions not known")
+            return False
+
         # Get the metadata for the miner.
         metadata = await self._get_metadata(hotkey)
 
@@ -44,11 +55,13 @@ class ModelUpdater:
             )
             return False
 
-        if metadata.id.competition != constants.COMPETITION_ID:
+        if metadata.id.competition not in self.competitions:
             bt.logging.trace(
                 f"Hotkey {hotkey} advertized model for invalid competition {metadata.id.competition}"
             )
             return False
+        cname = metadata.id.competition
+        cparams = self.competitions[cname]
 
         # Check what model id the model tracker currently has for this hotkey.
         tracker_model_metadata = self.model_tracker.get_model_metadata_for_miner_hotkey(
@@ -64,7 +77,8 @@ class ModelUpdater:
 
         # Otherwise we need to download the new model based on the metadata.
         try:
-            model_size_limit = constants.MAX_MODEL_BYTES
+            bt.logging.debug(f"download_model({metadata.id}) to {path}")
+            model_size_limit = cparams.get('model_size', constants.MAX_MODEL_SIZE)
             model = await self.remote_store.download_model(
                 metadata.id, path, model_size_limit
             )
@@ -83,17 +97,11 @@ class ModelUpdater:
             )
             return False
 
-        # Check that the parameter count of the model is within allowed bounds.
-        parameter_size = sum(p.numel() for p in model.pt_model.parameters())
-        if parameter_size > constants.MAX_MODEL_PARAMETERS:
+        # Check that the model parameters are allowed in the proposed competition
+        mdl_allowed, reason = competitions.validate_model_constraints(model.pt_model, cparams)
+        if not mdl_allowed:
             bt.logging.trace(
-                f"Sync for hotkey {hotkey} failed. Parameter size of the model {parameter_size} exceeded max size {parameter_limit} at block {metadata.block}."
-            )
-            return False
-
-        if type(model.pt_model) not in constants.ALLOWED_MODEL_TYPES:
-            bt.logging.trace(
-                f"Sync for hotkey {hotkey} failed. Model type {type(model.pt_model)} is not allowed at block {metadata.block}."
+                f"Sync for hotkey {hotkey} failed: model not allowed in competition {cname}: {reason}"
             )
             return False
 
