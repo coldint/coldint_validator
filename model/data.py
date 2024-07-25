@@ -85,33 +85,3 @@ class ModelMetadata(BaseModel):
         description="Block on which this model was claimed on the chain."
     )
 
-
-class TokenizerIdentifier(IntEnum):
-    """Identifiers the tokenizer to use. This may mean different tokenizers or different implementations."""
-
-    DISTILGPT_2 = 1
-    GPT_4_TIKTOKEN = 2
-
-
-@dataclasses.dataclass()
-class ModelCriteria:
-    """Collection of criteria that are relevant for interacting with models in the subnet."""
-
-    # Sequence length used for inference.
-    sequence_length: int
-
-    # Whether bfloat16 and flash attention optimizations should be used.
-    optimized: bool
-
-    # Maximum model size in bytes.
-    max_model_bytes: int
-
-    # Maximum model parameter size.
-    max_model_parameters: int
-
-    # Allowed model types.
-    allowed_model_types: dict[type]
-
-    # Tokenizer to use.
-    tokenizer_identifier: TokenizerIdentifier
-    
