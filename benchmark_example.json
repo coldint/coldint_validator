@@ -1,0 +1,14 @@
+{
+ 	"254": {
+		"competition": "c01",
+		"block": 3461910,
+		"path": "/root/data/models/20240724_phi3mini.0003.samples0.settings0",
+		"label": "phi3_v1"
+	},
+ 	"255": {
+		"competition": "c01",
+		"block": 3461904,
+		"path": "/root/data/models/Phi-3-mini-4k-instruct",
+		"label": "Phi-3-mini-4k"
+	}
+}
