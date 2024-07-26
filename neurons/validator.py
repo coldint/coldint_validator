@@ -715,7 +715,10 @@ class Validator:
             return
 
         # Skew weight distribution towards models with high win_rate
-        win_rate = np.array([win_info['win_rate'][uid] for uid in uids])
+        win_rate = np.array([
+            win_info['win_rate'][uid] if uid in win_info['win_rate'] else 0
+                for uid in uids
+        ])
         model_weights = win_rate**constants.WEIGHT_SKEW_FACTOR
         model_weights /= np.sum(model_weights)
         model_weights = {uid: weight for uid, weight in zip(uids, model_weights)}
