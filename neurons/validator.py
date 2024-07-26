@@ -743,6 +743,7 @@ class Validator:
                 "competition": cname,
                 "label": uid_to_label.get(uid, ''),
                 "block": uid_to_block.get(uid, 1<<31),
+                "losses": losses_per_uid[uid],
                 "loss_pt_avg": np.nanmean(losses_pt_per_uid[uid]),
                 "loss_pt_std": np.nanstd(losses_pt_per_uid[uid]),
                 "loss_sum_avg": np.nanmean(losses_per_uid[uid]),
@@ -750,6 +751,7 @@ class Validator:
                 "adv_factor": 100*(1-advantage_factors.get(uid,1)),
                 "win_rate": win_rate.get(uid, 0),
                 "win_total": wins.get(uid, 0),
+                "win_matrix_row": win_matrix.get(uid, None) if win_matrix else None
             }
 
         return n_evaluated
@@ -817,8 +819,10 @@ class Validator:
         # Build step log
         step_log = {
             "timestamp": time.time(),
+            'block': self.current_block,
             "pages": pages,
             "uids": [int(uid) for uid in self.step_uid_log.keys()],
+            "competitions": self.competitions,
             "uid_data": {},
         }
         for uid, info in self.step_uid_log.items():
@@ -869,8 +873,6 @@ class Validator:
                 table.add_row(str(index), str(round(weight, 4)))
         console = Console()
         console.print(table)
-
-        bt.logging.trace(f"Step results: {step_log}")
 
         if self.config.wandb.on and not self.config.offline:
             # If we have already completed X steps then we will complete the current wandb run and make a new one.
