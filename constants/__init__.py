@@ -38,28 +38,15 @@ SUBNET_N_UIDS   = 256
 # The root directory of this project.
 ROOT_DIR = Path(__file__).parent.parent
 
-# Model parameters
-MAX_MODEL_BYTES         = 15*1024*1024*1024
-MAX_MODEL_PARAMETERS    = 6_900_000_000
-
-ALLOWED_MODEL_TYPES = {
-    GPTNeoXForCausalLM,
-    MistralForCausalLM,
-    LlamaForCausalLM,
-    BartForCausalLM,
-    FalconForCausalLM,
-    PhiForCausalLM,
-    GemmaForCausalLM,
-}
+MAX_MODEL_SIZE          = 15*1024*1024*1024
 
 # The number of run steps to log to single wandb run.
 MAX_RUN_STEPS_PER_WANDB_RUN = 100
 
-COMPETITION_ID          = "c00"
-
-# Hall of fame configuration
+# Hall of fame / competitions configuration
+CFG_FETCH_INTERVAL      = 15*60
 HOF_URL                 = "https://github.com/coldint/sn29/raw/main/hall_of_fame.json"
-HOF_FETCH_INTERVAL      = 15*60
+COMPETITIONS_URL        = "https://github.com/coldint/sn29/raw/main/competitions.json"
 
 # Maximum fraction of (miner) emissions for rewards
 REWARDS_MAX_FRACTION    = 0.4
@@ -75,7 +62,9 @@ REWARDS_IV_FACTOR       = 1 / (1 - REWARDS_DECAY_FACTOR)
 WEIGHT_SKEW_FACTOR      = 1.2
 
 # Fraction of weight to be considered a top miner on other validator (and re-evaluated once in a while)
-TOP_MINER_FRACTION      = 0.2
+TOP_MINER_FRACTION      = 0.1
+
+MAX_SEQUENCE_LEN        = 4096
 
 # validator weight moving average term
 weight_alpha = 0.5
@@ -92,8 +81,6 @@ n_eval_pages = 8
 sample_min = 6
 # validator eval batch max. Difference from min is room to eval newly uploaded models.
 sample_max = 14
-# validator incentive threshold to prioritize updates. All incentives add up to 1.
-update_priority_incentive_threshold = 0.01
 # time required between updates to the chain.
 chain_update_cadence = dt.timedelta(minutes=20)
 # time required between retrying evaluation of a stale model. (First retry will be immediate).
