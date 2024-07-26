@@ -65,6 +65,11 @@ def validator_config():
         default=constants.SUBNET_UID,
         help="The subnet UID.",
     )
+    parser.add_argument(
+        "--save_step_json",
+        type=str,
+        help="Write step JSON file here",
+    )
 
     bt.subtensor.add_args(parser)
     bt.logging.add_args(parser)

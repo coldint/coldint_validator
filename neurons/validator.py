@@ -825,6 +825,13 @@ class Validator:
             info['weight'] = self.weights[uid].item()
             step_log['uid_data'][str(uid)] = info
 
+        if self.config.save_step_json:
+            try:
+                with open(self.config.save_step_json, 'w') as f:
+                    json.dump(step_log, f)
+            except Exception as e:
+                bt.logging.warning(f"Failed to write step json to {self.config.save_step_json}: {e}")
+
         table = Table(title="Step")
         table.add_column("uid", justify="right", style="cyan", no_wrap=True)
         table.add_column("compt", style="magenta")
