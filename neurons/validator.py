@@ -34,13 +34,14 @@ import wandb
 import constants
 import dataset
 import validation
-from model import model_utils
+from model import model_utils, competitions
 from model.data import ModelId
 from model.model_tracker import ModelTracker
 from model.model_updater import ModelUpdater
 from model.storage.chain.chain_model_metadata_store import ChainModelMetadataStore
 from model.storage.disk.disk_model_store import DiskModelStore
 from model.storage.hugging_face.hugging_face_model_store import HuggingFaceModelStore
+from model.storage.disk import utils as disk_utils
 from neurons import config
 import traceback
 import threading
@@ -69,7 +70,10 @@ class Validator:
     def load_state(self):
         # Updated by model updater thread, used by evaluation thread
         self.hall_of_fame = {}
+        self.competitions = {}
 
+        # Competition state, only used by evaluation thread
+        self.cstate = {}
 
         state = {}
         state_fn = os.path.join(self.state_path(), Validator.STATE_FILENAME)
@@ -83,7 +87,9 @@ class Validator:
         with self.state_lock:
             if 'version' in state and state['version'] == constants.__spec_version__:
                 self.hall_of_fame = state.pop("hall_of_fame", {})
+                self.competitions = state.pop("competitions", {})
                 tracker_state = state.pop("tracker", {})
+                self.cstate = state.pop('cstate', {})
                 bt.logging.info("State loaded successfully")
             else:
                 bt.logging.info("State version incompatible, starting with clean state")
@@ -97,8 +103,10 @@ class Validator:
         with self.state_lock:
             state = {
                 'version': constants.__spec_version__,
+                'competitions': self.competitions,
                 'hall_of_fame': self.hall_of_fame,
                 'tracker': self.model_tracker.get_state(),
+                'cstate': self.cstate,
             }
         try:
             with open(os.path.join(self.state_path(), Validator.STATE_FILENAME), 'w') as f:
@@ -127,35 +135,26 @@ class Validator:
         if not self.config.offline:
             self.uid = utils.assert_registered(self.wallet, self.metagraph)
 
-        # Track how may run_steps this validator has completed.
-        self.run_step_count = 0
-
         # Dont log to wandb if offline.
         self.wandb_run = None
         if self.config.wandb.on and not self.config.offline:
             self.new_wandb_run()
 
-        # === Running args ===
+        # Weights and step info
         self.weights = torch.zeros(constants.SUBNET_N_UIDS)
+        self.run_step_count = 0
         self.epoch_step = 0
         self.global_step = 0
         self.last_epoch = self.metagraph.block.item()
 
-        self.uids_to_eval = set()
-
-        # Create a set of newly added uids that should be evaluated on the next loop.
-        self.pending_uids_to_eval_lock = threading.RLock()
-        self.pending_uids_to_eval = set()
-
-        # Setup a model tracker to track which miner is using which model id.
+        # model_tracker tracks which miner is using which model id.
+        self.state_lock = threading.RLock()
         self.model_tracker = ModelTracker()
 
-        self.hall_of_fame = {}
-
+        # Load or initialize internal state
         self.load_state()
 
         # Setup a miner iterator to ensure we update all miners.
-        # This subnet does not differentiate between miner and validators so this is passed all uids.
         self.miner_iterator = MinerIterator(self.metagraph.uids.tolist())
 
         # Setup a ModelMetadataStore
@@ -176,18 +175,19 @@ class Validator:
             remote_store=self.remote_store,
             local_store=self.local_store,
             model_tracker=self.model_tracker,
+            comps=self.competitions
         )
 
         # Create a metagraph lock to avoid cross thread access issues in the update and clean loop.
         self.metagraph_lock = threading.RLock()
 
-        # == Initialize the update thread ==
+        # Initialize the update thread
         self.stop_event = threading.Event()
         bt.logging.trace("Starting update_models thread")
         self.update_thread = threading.Thread(target=self.update_models, daemon=True)
         self.update_thread.start()
 
-        # == Initialize the cleaner thread to remove outdated models ==
+        # Initialize the cleaner thread to remove outdated models
         bt.logging.trace("Starting clean_models thread")
         self.clean_thread = threading.Thread(target=self.clean_models, daemon=True)
         self.clean_thread.start()
@@ -220,7 +220,32 @@ class Validator:
 
         bt.logging.debug(f"Started a new wandb run: {name}")
 
+    def get_all_active_uids(self):
+        ret = []
+        with self.state_lock:
+            for cname, cinfo in self.cstate.items():
+                ret.extend(cinfo['uids_pool'])
+                ret.extend(cinfo['uids_pending'])
+        return set(ret)
 
+    def add_uid_to_competition(self, uid, hotkey):
+        """
+        Add uid to the competition pool which it participates in, delete it from others.
+        """
+        meta = self.model_tracker.get_model_metadata_for_miner_hotkey(hotkey)
+        if meta is None:
+            bt.logging.warning(f"Metadata for {uid}/{hotkey} not available")
+        with self.state_lock:
+            for cname, cinfo in self.cstate.items():
+                if cname == meta.id.competition:
+                    bt.logging.info(f"Adding {uid} to competition {cname}")
+                    if uid not in cinfo['uids_pool'] and uid not in cinfo['uids_pending']:
+                        cinfo['uids_pending'].append(uid)
+                else:
+                    if uid in cinfo['uids_pool']:
+                        cinfo['uids_pool'].remove(uid)
+                    if uid in cinfo['uids_pending']:
+                        cinfo['uids_pending'].remove(uid)
 
     def check_top_models(self):
         # At most once per `chain_update_cadence`, check which models are being assigned weight by
@@ -237,12 +262,7 @@ class Validator:
         # Find any miner UIDs which top valis are assigning weight and aren't currently scheduled for an eval.
         top_miner_uids = set(utils.list_top_miners(metagraph))
         bt.logging.info(f"Top miners: {top_miner_uids}")
-        with self.pending_uids_to_eval_lock:
-            uids_to_add = (
-                top_miner_uids
-                - self.uids_to_eval
-                - self.pending_uids_to_eval
-            )
+        uids_to_add = top_miner_uids - self.get_all_active_uids()
 
         for uid in uids_to_add:
             # Limit how often we'll retry these top models.
@@ -263,12 +283,7 @@ class Validator:
                     self.model_updater.sync_model(hotkey, force=True)
                 )
 
-                # Since this is a top model (as determined by other valis),
-                # we don't worry if self.pending_uids is already "full". At most
-                # there can be 10 top models that we'd add here and that would be
-                # a wildy exceptional case. It would require every vali to have a
-                # different top model.
-                self.pending_uids_to_eval.add(uid)
+                self.add_uid_to_competition(uid, hotkey)
                 bt.logging.debug(
                     f"Retrying evaluation for previously discarded model with incentive for UID={uid}."
                 )
@@ -277,26 +292,37 @@ class Validator:
                     f"Failure in update loop for UID={uid} during top model check. {traceback.format_exc()}"
                 )
 
-    def update_hall_of_fame(self):
-        now = time.time()
-        if self.last_hof_fetch is not None and \
-                (now - self.last_hof_fetch) < constants.HOF_FETCH_INTERVAL:
-            return
-        self.last_hof_fetch = now
 
+    def update_dynamic_config(self):
+        now = time.time()
+        if self.last_cfg_fetch is not None and \
+                (now - self.last_cfg_fetch) < constants.CFG_FETCH_INTERVAL:
+            return
+        self.last_cfg_fetch = now
+
+        # Competition info
+        comps = competitions.load_competitions(constants.COMPETITIONS_URL)
+        if comps is not None:
+            with self.state_lock:
+                self.competitions = comps
+                self.model_updater.set_competitions(self.competitions)
+
+        # Hall of fame
         try:
             req = requests.get(constants.HOF_URL)
             req.raise_for_status()
-            self.hall_of_fame = req.json()
+            with self.state_lock:
+                self.hall_of_fame = req.json()
             bt.logging.info(f"Fetched hall of fame content, containing {len(self.hall_of_fame)} entries")
         except Exception as e:
             bt.logging.error(f"Failed to fetch hall of fame: {e}")
 
+        self.save_state()
 
     def update_models(self):
         """
         Updates the models in the local store based on the latest metadata from the chain.
-        Periodically fetch hall of fame config json.
+        Periodically fetch hall of fame / competition config json.
         """
 
         # Track how recently we updated each uid from sequential iteration.
@@ -306,36 +332,13 @@ class Validator:
         # Track how recently we retried a model with incentive we've already dropped.
         self.uid_last_retried_evaluation = dict()
         # Track when we last fetched hall of fame
-        self.last_hof_fetch = None
+        self.last_cfg_fetch = None
 
-        # The below loop iterates across all miner uids and checks to see
-        # if they should be updated.
         while not self.stop_event.is_set():
             try:
-                self.update_hall_of_fame()
+                self.update_dynamic_config()
                 self.check_top_models()
 
-                # Top model check complete. Now continue with the sequential iterator to check for the next miner
-                # to update.
-                pending_uid_count = 0
-                current_uid_count = 0
-                with self.pending_uids_to_eval_lock:
-                    pending_uid_count = len(self.pending_uids_to_eval)
-                    current_uid_count = len(self.uids_to_eval)
-
-                # Only allow at most sample max models. Typically this will be carryover from sample_min + new models.
-                while pending_uid_count + current_uid_count >= self.config.sample_max:
-                    # Wait 5 minutes for the eval loop to process them.
-                    bt.logging.info(
-                        f"Update loop: Already {pending_uid_count + current_uid_count} synced models pending eval. Checking again in 5 minutes."
-                    )
-                    time.sleep(300)
-                    # Check to see if the pending uids have been cleared yet.
-                    with self.pending_uids_to_eval_lock:
-                        pending_uid_count = len(self.pending_uids_to_eval)
-                        current_uid_count = len(self.uids_to_eval)
-
-                # We have space to add more models for eval. Process the next UID.
                 next_uid = next(self.miner_iterator)
 
                 # Confirm that we haven't already checked it in the chain update cadence.
@@ -365,11 +368,8 @@ class Validator:
                     self.model_updater.sync_model(hotkey, force=False)
                 )
                 if updated:
-                    with self.pending_uids_to_eval_lock:
-                        self.pending_uids_to_eval.add(next_uid)
-                        bt.logging.debug(
-                            f"Found a new model for UID={next_uid}. It will be evaluated on the next loop."
-                        )
+                    self.add_uid_to_competition(next_uid, hotkey)
+
             except Exception as e:
                 bt.logging.error(
                     f"Error in update loop: {e} \n {traceback.format_exc()}"
@@ -400,16 +400,14 @@ class Validator:
                 }
 
                 # Find all hotkeys that are currently being evaluated or pending eval.
-                uids_to_keep = set()
-                with self.pending_uids_to_eval_lock:
-                    uids_to_keep = self.uids_to_eval.union(self.pending_uids_to_eval)
+                uids_to_keep = self.get_all_active_uids()
 
-                hotkeys_to_keep = set()
                 with self.metagraph_lock:
-                    for uid in uids_to_keep:
-                        # Injected models might not be in metagraph
-                        if uid < len(self.metagraph.hotkeys):
-                            hotkeys_to_keep.add(self.metagraph.hotkeys[uid])
+                    # Injected models might not be in metagraph
+                    hotkeys_to_keep = set([
+                        self.metagraph.hotkeys[uid]
+                            for uid in uids_to_keep if uid < len(self.metagraph.hotkeys)
+                    ])
 
                 # Only keep those hotkeys.
                 evaluated_hotkeys_to_model_id = {
@@ -529,17 +527,24 @@ class Validator:
 
         return reward_weights, total_weight
 
-    def update_weights(self, uids, model_weights):
+    def update_weights(self):
         '''
-        Update self.weights, based on uids and model_weights.
+        Update self.weights, based on internal cstate
         Up to constants.REWARDS_MAX_FRACTION part of the total weight will be based
         on the hall of fame rewards settings.
         '''
         new_weights = torch.zeros_like(self.weights)
         reward_weights, reward_sum = self.get_reward_weights()
+
         # Scale model weights down by (1 - reward_sum)
-        for uid, weight in model_weights.items():
-            new_weights[uid] = (1 - reward_sum) * weight
+        for cname, cparams in self.competitions.items():
+            if cname not in self.cstate:
+                bt.logging.warning(f"No evaluations in competition {cname}")
+                continue
+
+            for uid, weight in self.cstate[cname]['uids_weight'].items():
+                new_weights[uid] = (1 - reward_sum) * cparams['reward'] * weight
+
         # Add bounties
         new_weights += reward_weights
         # Normalize total, which should in principle already be the case
@@ -558,102 +563,131 @@ class Validator:
         try:
             with open(self.BENCHMARK_FILENAME) as f:
                 d = {int(k): v for k, v in json.load(f).items()}
+            bt.logging.info(f"Loaded benchmark config with {len(d)} items")
             return d
         except Exception as e:
             bt.logging.warning(f"Failed to load benchmark config: {e}")
         return {}
 
     async def run_step(self):
-        """
-        Executes a step in the evaluation process of models. This function performs several key tasks:
-            1. Identifies valid models for evaluation (top N from last run + newly updated models).
-            2. Generates random pages for evaluation and prepares batches for each page from the dataset.
-            3. Computes the scoring for each model based on the losses incurred on the evaluation batches.
-            4. Calculates wins and win rates for each model to determine their performance relative to others.
-            5. Updates the weights of each model based on their performance and applies a softmax normalization.
-            6. Implements a blacklist mechanism to remove underperforming models from the evaluation set.
-            7. Logs all relevant data for the step, including model IDs, pages, batches, wins, win rates, and losses.
-        """
-        # Add uids with newly updated models to the upcoming batch of evaluations.
-        with self.pending_uids_to_eval_lock:
-            self.uids_to_eval.update(self.pending_uids_to_eval)
-            self.pending_uids_to_eval.clear()
-
-        benchmark_cfg = self.load_benchmark_config()
-        uids = list(self.uids_to_eval | set(benchmark_cfg.keys()))
-
-        if not uids:
-            bt.logging.debug("No uids to eval. Waiting 5 minutes to download some models.")
-            time.sleep(300)
-            return
-
-        uid_to_block = {uid: math.inf for uid in uids}
         bt.logging.debug(f'run_step() @ current block {self.current_block}')
+        self.inject_models()
 
-        tokenizer = model_utils.get_tokenizer(cache_dir=self.config.model_dir)
+        # Collect uid evaluation data here
+        self.step_uid_log = dict()
+
+        # Currently, all competitions use the same dataset.
+        # Fetch samples that are shared between all competitions
         dataloader = dataset.SubsetFineWebEdu2Loader(
             batch_size=constants.batch_size,
-            num_pages=self.config.pages_per_eval,
-            tokenizer=tokenizer,
+            num_pages=0,
+            tokenizer=None,
             pack=False
         )
-        batches = list(dataloader)
-
-        bt.logging.debug(f"Computing losses on {uids} with {len(batches)} batches from pages {dataloader.pages}")
-
-        if len(batches) == 0:
+        samples = dataloader.fetch_data_to_rows(constants.n_eval_pages)
+        if len(samples) == 0:
             bt.logging.warning(f"No samples to eval. Waiting one minute before retrying.")
-            time.sleep(60)
+            await asyncio.sleep(60)
             return
 
+        n_models_evaluated = 0
+        for cname in self.competitions:
+            n_models_evaluated += self.run_step_for_competition(cname, dataloader)
+
+        if n_models_evaluated == 0:
+            bt.logging.debug("No uids to eval. Waiting 2 minutes to download some models.")
+            await asyncio.sleep(120)
+            return
+
+        self.update_weights()
+
+        self.save_state()
+
+        # Log to screen and wandb.
+        pages_desc = [f'{cfg_name}_{num_rows}_{split}' for cfg_name, num_rows, split in dataloader.pages]
+        self.log_step(pages_desc)
+
+        # Increment the number of completed run steps by 1
+        self.run_step_count += 1
+
+    def run_step_for_competition(self, cname, dataloader):
+        """
+        Run step for one of the competitions
+        Return number of uids evaluated
+        """
+        with self.state_lock:
+            # Initialize competition state
+            if cname not in self.cstate:
+                self.cstate[cname] = dict(
+                    uids_pool=[],
+                    uids_pending=[],
+                )
+            cstate = self.cstate[cname]
+            cstate['uids_pool'] = list(set(cstate['uids_pool']) | set(cstate['uids_pending']))
+            cstate['uids_pending'] = []
+            uids_pool = cstate['uids_pool']
+
+        if len(uids_pool) == 0:
+            with self.state_lock:
+                cstate['uids_weight'] = {}
+            bt.logging.debug(f"No miners participating in competition {cname}")
+            return 0
+
+        bt.logging.debug(f"Evaluating competition {cname} with uids {uids_pool} on {len(dataloader.buffer)} samples")
+
+        cinfo = self.competitions[cname]
+
+        # Competition-wide tokenizer
+        n_batches = len(dataloader.buffer)
+        batches = None
+        if 'tokenizer' in cinfo:
+            batches = dataloader.tokenize(cinfo['tokenizer'], max_len=constants.MAX_SEQUENCE_LEN)
+
         # Compute model losses on batches.
-        losses_per_uid = {muid: None for muid in uids}
-
-        load_model_perf = PerfMonitor("Eval: Load model")
-        compute_loss_perf = PerfMonitor("Eval: Compute loss")
-
-        for uid in uids:
+        losses_per_uid = {uid: None for uid in uids_pool}
+        losses_pt_per_uid = {uid: None for uid in uids_pool}
+        uid_to_label = {uid: '' for uid in uids_pool}
+        uid_to_block = {uid: 1<<31 for uid in uids_pool}
+        n_evaluated = 0
+        for uid in uids_pool:
             bt.logging.trace(f"Computing model losses for uid {uid}.")
+            metadata = self.get_uid_metadata(uid)
 
-            if uid in benchmark_cfg:
-                # Model data from dynamic config
-                bcfg = benchmark_cfg[uid]
-                hotkey = bcfg.get("hotkey", "xxx")
-                model_path = bcfg.get('path', 'please specify path')
-                model_i_metadata = Container()
-                model_i_metadata.block = bcfg.get("block", 1<<31)
-                model_i_metadata.id = ModelId.dummy(bcfg.get('identifier',model_path))
-            elif uid < len(self.metagraph.hotkeys):
-                # Model from chain
-                hotkey = self.metagraph.hotkeys[uid]
-                model_i_metadata = self.model_tracker.get_model_metadata_for_miner_hotkey(hotkey)
-                model_path = None
-            else:
-                model_i_metadata = None
-
-            # This variable should be overwritten below if the model has metadata.
-            losses = [math.inf for _ in range(len(batches))]
-
-            if model_i_metadata != None:
+            losses = [math.inf]*n_batches
+            losses_pt = losses.copy()
+            if metadata is not None:
                 try:
-                    uid_to_block[uid] = model_i_metadata.block if model_i_metadata.block is not None else 1<<31
-                    bt.logging.debug(f"Evaluating uid {uid} from block {uid_to_block[uid]}")
+                    uid_to_block[uid] = metadata.block if metadata.block is not None else 1<<31
+                    uid_to_label[uid] = metadata.id.format_label()
+                    bt.logging.debug(f"Evaluating uid {uid} ({uid_to_label[uid]}) from block {uid_to_block[uid]}")
 
-                    with load_model_perf.sample():
-                        model_i = self.local_store.retrieve_model(hotkey, model_i_metadata.id, path=model_path)
+                    # Get model tokenizer if no competition-wide tokenizer is set
+                    mdl_batches = batches
+                    if mdl_batches is None:
+                        model_path = disk_utils.get_local_model_snapshot_dir(
+                                self.local_store.base_dir,
+                                metadata.hotkey,
+                                metadata.id) if metadata.path is None else metadata.path
+                        mdl_batches = dataloader.tokenize(model_path, max_len=constants.MAX_SEQUENCE_LEN)
 
-                    with compute_loss_perf.sample():
+                    model_i = self.local_store.retrieve_model(metadata.hotkey, metadata.id, path=metadata.path)
+                    mdl_allowed, reason = competitions.validate_model_constraints(model_i.pt_model, cinfo)
+                    if mdl_allowed:
                         losses = utils.run_in_subprocess(
                             functools.partial(
                                 validation.compute_losses,
                                 model_i.pt_model,
-                                batches,
-                                self.config.device,
-                                tokenizer.eos_token_id,
+                                mdl_batches,
+                                self.config.device
                             ),
                             ttl=360,
                             mode="spawn",
                         )
+                        losses_pt = [loss_sum / len(batch[0]) for loss_sum, batch in zip(losses, mdl_batches)]
+                        n_evaluated += 1
+                    else:
+                        bt.logging.info(f"Model for uid {uid} violates competition {cname} constraints: {reason}")
+
                     del model_i
                 except Exception as e:
                     bt.logging.error(
@@ -665,58 +699,90 @@ class Validator:
                 )
 
             losses_per_uid[uid] = losses
-            bt.logging.debug(f"Losses for uid:{uid}: {np.nanmean(losses):.03f} +- {np.nanstd(losses):.03f}")
+            losses_pt_per_uid[uid] = losses_pt
+            bt.logging.debug(f"Losses for uid:{uid}, per token: {np.nanmean(losses_pt):.03f} +- {np.nanstd(losses_pt):.03f}, sum {np.nanmean(losses):.01f} +- {np.nanstd(losses):.01f}")
 
         win_info = validation.compute_wins(losses_per_uid, uid_to_block, self.current_block)
         if 'win_rate' not in win_info:
             bt.logging.warning("compute_wins() returned no result")
-            return
+            return 0
 
         # Skew weight distribution towards models with high win_rate
         win_rate = np.array([
             win_info['win_rate'][uid] if uid in win_info['win_rate'] else 0
-                for uid in uids
+                for uid in uids_pool
         ])
         model_weights = win_rate**constants.WEIGHT_SKEW_FACTOR
         model_weights /= np.sum(model_weights)
-        model_weights = {uid: weight for uid, weight in zip(uids, model_weights)}
-        self.update_weights(uids, model_weights)
+        model_weights = {uid: weight for uid, weight in zip(uids_pool, model_weights)}
 
-        # Model sort order: by weight if >= 0.001, win-rate otherwise
-        model_prio = {
-            uid: (
-                # Add 1 to ensure it is always greater than a win rate.
-                1 + self.weights[uid].item()
-                if self.weights[uid].item() >= 0.001
-                else wr
-            )
-            for uid, wr in win_info['win_rate'].items()
-        }
-        self.uids_to_eval = set(sorted(model_prio, key=model_prio.get, reverse=True)[:self.config.sample_min])
+        # Sort models by weight / win_rate, keep config.sample_min entries
+        new_uids_pool = list(sorted(model_weights, key=model_weights.get, reverse=True)[:self.config.sample_min])
 
-        self.save_state()
+        # Update state: weights and which uids to keep for next run
+        with self.state_lock:
+            self.cstate[cname]['uids_weight'] = model_weights
+            self.cstate[cname]['uids_pool'] = new_uids_pool
 
-        # Log the performance of the eval loop.
-        bt.logging.debug(load_model_perf.summary_str())
-        bt.logging.debug(compute_loss_perf.summary_str())
+        win_matrix = win_info.get('matrix', None)
+        if win_matrix is not None:
+            bt.logging.info(f"Competition {cname} result:")
+            self.print_win_matrix(win_info['matrix'], uid_to_label)
 
-        # Log to screen and wandb.
-        pages_desc = [f'{cfg_name}_{num_rows}_{split}' for cfg_name, num_rows, split in dataloader.pages]
-        self.log_step(
-            uids,
-            uid_to_block,
-            pages_desc,
-            win_info,
-            benchmark_cfg,
-            losses_per_uid,
-            load_model_perf.summary_str(),
-            compute_loss_perf.summary_str(),
-        )
+        # Update step log
+        wins = win_info.get('wins', {})
+        win_rate = win_info.get('win_rate', {})
+        advantage_factors = win_info.get('advantage_factors', {})
+        for uid in uids_pool:
+            self.step_uid_log[uid] = {
+                "uid": uid,
+                "competition": cname,
+                "label": uid_to_label.get(uid, ''),
+                "block": uid_to_block.get(uid, 1<<31),
+                "loss_pt_avg": np.nanmean(losses_pt_per_uid[uid]),
+                "loss_pt_std": np.nanstd(losses_pt_per_uid[uid]),
+                "loss_sum_avg": np.nanmean(losses_per_uid[uid]),
+                "loss_sum_std": np.nanstd(losses_per_uid[uid]),
+                "adv_factor": 100*(1-advantage_factors.get(uid,1)),
+                "win_rate": win_rate.get(uid, 0),
+                "win_total": wins.get(uid, 0),
+            }
 
-        # Increment the number of completed run steps by 1
-        self.run_step_count += 1
+        return n_evaluated
 
-    def print_win_matrix(self, matrix, benchmark_cfg=None, show_delta_loss=False):
+    def get_uid_metadata(self, uid):
+        metadata = Container()
+        if uid in self.benchmark_cfg:
+            # Model data from dynamic config
+            bcfg = self.benchmark_cfg[uid]
+            metadata.hotkey = bcfg.get("hotkey", "xxx")
+            metadata.block = bcfg.get("block", 1<<31)
+            metadata.path = bcfg.get('path', 'please specify path')
+            metadata.id = ModelId.dummy(bcfg.get('label', os.path.split(metadata.path)[-1]))
+        elif uid < len(self.metagraph.hotkeys):
+            # Model from chain
+            metadata.hotkey = self.metagraph.hotkeys[uid]
+            chain_data = self.model_tracker.get_model_metadata_for_miner_hotkey(metadata.hotkey)
+            metadata.id = chain_data.id
+            metadata.block = chain_data.block
+            metadata.path = None
+        else:
+            metadata = None
+        return metadata
+
+    def inject_models(self):
+        self.benchmark_cfg = self.load_benchmark_config()
+        with self.state_lock:
+            for uid, binfo in self.benchmark_cfg.items():
+                competition = binfo.get('competition', '')
+                if competition not in self.cstate:
+                    bt.logging.info(f"Injected model {uid} competition '{competition}' unknown")
+                    continue
+                ci = self.cstate[competition]
+                if uid not in ci['uids_pool'] and uid not in ci['uids_pending']:
+                    ci['uids_pending'].append(uid)
+
+    def print_win_matrix(self, matrix, uid_to_label={}, show_delta_loss=False):
         if show_delta_loss:
             title = "Model win matrix, true wins/adv wins/avg delta loss"
         else:
@@ -726,10 +792,8 @@ class Validator:
         for uid in matrix:
             table.add_column(f'UID {uid}')
         for uid_a,row in matrix.items():
-            label = ''
-            if uid_a in benchmark_cfg:
-                label = benchmark_cfg[uid_a].get('label', benchmark_cfg[uid_a].get('path', '???')) + ' '
-            vals = [f'{label}UID {uid_a}']
+            label = uid_to_label.get(uid_a, '')
+            vals = [f'{label} UID {uid_a}']
             for uid_b,wins in row.items():
                 val = '?'
                 if uid_a==uid_b:
@@ -744,67 +808,46 @@ class Validator:
         console = Console()
         console.print(table)
 
-    def log_step(
-        self,
-        uids,
-        uid_to_block,
-        pages,
-        win_info,
-        benchmark_cfg,
-        losses_per_uid,
-        load_model_perf_str,
-        compute_loss_perf_str,
-    ):
+    def log_step(self, pages):
         """Logs the results of the step to the console and wandb (if enabled)."""
         # Build step log
         step_log = {
             "timestamp": time.time(),
             "pages": pages,
-            "uids": uids,
+            "uids": [int(uid) for uid in self.step_uid_log.keys()],
             "uid_data": {},
         }
-        wins = win_info.get('wins', {})
-        win_rate = win_info.get('win_rate', {})
-        advantage_factors = win_info.get('advantage_factors', {})
-        for i, uid in enumerate(uids):
-            step_log["uid_data"][str(uid)] = {
-                "uid": uid,
-                "block": uid_to_block[uid],
-                "loss_avg": np.nanmean(losses_per_uid[uid]),
-                "loss_std": np.nanstd(losses_per_uid[uid]),
-                "adv_factor": 100*(1-advantage_factors.get(uid,1)),
-                "win_rate": win_rate.get(uid, 0),
-                "win_total": wins.get(uid, 0),
-                "weight": self.weights[uid].item(),
-            }
+        for uid, info in self.step_uid_log.items():
+            info['weight'] = self.weights[uid].item()
+            step_log['uid_data'][str(uid)] = info
+
         table = Table(title="Step")
         table.add_column("uid", justify="right", style="cyan", no_wrap=True)
-        table.add_column("average_loss", style="magenta")
+        table.add_column("compt", style="magenta")
+        table.add_column("avg_pt_loss", style="magenta")
+        table.add_column("avg_sum_loss", style="magenta")
         table.add_column("adv_factor(%)", style="magenta")
         table.add_column("win_rate", style="magenta")
         table.add_column("win_total", style="magenta")
         table.add_column("weights", style="magenta")
         table.add_column("block", style="magenta")
-        for uid in uids:
-            d = step_log["uid_data"][str(uid)]
+        for uid, d in step_log['uid_data'].items():
             try:
                 table.add_row(
-                    str(uid),
-                    f"{d['loss_avg']:.04f}+-{d['loss_std']:.04f}",
+                    f"{uid} {d.get('label','')}",
+                    str(d['competition']),
+                    f"{d['loss_pt_avg']:.04f}+-{d['loss_pt_std']:.04f}",
+                    f"{d['loss_sum_avg']:.01f}+-{d['loss_sum_std']:.01f}",
                     f"{d['adv_factor']:.03f} of {100*constants.advantage_initial:.03f}",
                     str(round(d["win_rate"], 4)),
                     str(d["win_total"]),
-                    str(round(self.weights[uid].item(), 4)),
+                    str(round(d['weight'], 4)),
                     str(d["block"]),
                 )
             except:
                 pass
         console = Console()
         console.print(table)
-
-        win_matrix = win_info.get('matrix', None)
-        if win_matrix is not None:
-            self.print_win_matrix(win_matrix, benchmark_cfg)
 
         ws, ui = self.weights.topk(len(self.weights))
         table = Table(title="Weights > 0.001")
@@ -839,11 +882,9 @@ class Validator:
                 "time": time.time(),
                 "block": self.metagraph.block.item(),
                 "uid_data": {
-                    str(uid): uid_data[str(uid)]["loss_avg"] for uid in uids
+                    str(uid): uid_data[str(uid)]["loss_sum_avg"] for uid in uids
                 },
                 "weight_data": {str(uid): self.weights[uid].item() for uid in uids},
-                "load_model_perf_log": load_model_perf_str,
-                "compute_model_perf_log": compute_loss_perf_str,
             }
             bt.logging.trace("Logging to Wandb")
             self.wandb_run.log(
