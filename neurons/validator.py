@@ -892,6 +892,8 @@ class Validator:
 
     async def run(self):
         """Runs the validator loop, which continuously evaluates models and sets weights."""
+        # Give check_top_models some time
+        await asyncio.sleep(60)
         while True:
             try:
                 while (
