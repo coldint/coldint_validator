@@ -61,6 +61,9 @@ class ModelId(BaseModel):
             raise Exception(f'expecting {len(keys)} elements, found {len(tokens)}, in compressed string {cs}')
         return cls(**dict(zip(keys,tokens)))
 
+    def format_label(self):
+        return f"{self.namespace}/{self.name}"
+
     @classmethod
     def dummy(cls, identifier: str) -> Type["ModelId"]:
         return cls(
