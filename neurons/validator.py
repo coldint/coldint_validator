@@ -60,79 +60,51 @@ class Container:
     pass
 
 class Validator:
-    TRACKER_FILENAME = "model_tracker_2.pickle"
-    UIDS_FILENAME = "uids_2.pickle"
-    VERSION_FILENAME = "version.txt"
+    STATE_FILENAME = "validator_state.json"
     BENCHMARK_FILENAME = "benchmark.json"
 
     def state_path(self) -> str:
-        """
-        Returns the file path for storing validator state.
-
-        Returns:
-        str: A string representing the file path.
-        """
         return os.path.join(self.config.model_dir, "vali-state")
 
     def load_state(self):
-        # Construct the filepaths to save/load state.
+        # Updated by model updater thread, used by evaluation thread
+        self.hall_of_fame = {}
+
+
+        state = {}
+        state_fn = os.path.join(self.state_path(), Validator.STATE_FILENAME)
+        if os.path.exists(state_fn):
+            try:
+                with open(state_fn) as f:
+                    state = json.load(f)
+            except Exception as e:
+                bt.logging.info(f"Invalid state file: {e}")
+
+        with self.state_lock:
+            if 'version' in state and state['version'] == constants.__spec_version__:
+                self.hall_of_fame = state.pop("hall_of_fame", {})
+                tracker_state = state.pop("tracker", {})
+                bt.logging.info("State loaded successfully")
+            else:
+                bt.logging.info("State version incompatible, starting with clean state")
+                tracker_state = {}
+
+        self.model_tracker.set_state(tracker_state)
+
+    def save_state(self):
         state_dir = self.state_path()
         os.makedirs(state_dir, exist_ok=True)
-
-        self.uids_filepath = os.path.join(state_dir, Validator.UIDS_FILENAME)
-        self.tracker_filepath = os.path.join(state_dir, Validator.TRACKER_FILENAME)
-        self.version_filepath = os.path.join(state_dir, Validator.VERSION_FILENAME)
-
-        # Check if the version has changed since we last restarted.
-        previous_version = utils.get_version(self.version_filepath)
-        utils.save_version(self.version_filepath, constants.__spec_version__)
-
-        # If this is an upgrade, blow away state so that everything is re-evaluated.
-        if previous_version != constants.__spec_version__:
-            bt.logging.info(
-                f"Validator updated. Previous version={previous_version}. Current version={constants.__spec_version__}"
-            )
-            if os.path.exists(self.uids_filepath):
-                bt.logging.info(
-                    f"Because the validator updated, deleting {self.uids_filepath} so everything is re-evaluated."
-                )
-                os.remove(self.uids_filepath)
-            if os.path.exists(self.tracker_filepath):
-                bt.logging.info(
-                    f"Because the validator updated, deleting {self.tracker_filepath} so everything is re-evaluated."
-                )
-                os.remove(self.tracker_filepath)
-
-        # Initialize the model tracker.
-        if not os.path.exists(self.tracker_filepath):
-            bt.logging.warning("No tracker state file found. Starting from scratch.")
-        else:
-            try:
-                self.model_tracker.load_state(self.tracker_filepath)
-            except Exception as e:
-                bt.logging.warning(
-                    f"Failed to load model tracker state. Reason: {e}. Starting from scratch."
-                )
-
-        # Initialize the UIDs to eval.
-        if not os.path.exists(self.uids_filepath):
-            bt.logging.warning("No uids state file found. Starting from scratch.")
-        else:
-            try:
-                with open(self.uids_filepath, "rb") as f:
-                    self.uids_to_eval = pickle.load(f)
-                    self.pending_uids_to_eval = pickle.load(f)
-            except Exception as e:
-                bt.logging.warning(
-                    f"Failed to load uids to eval state. Reason: {e}. Starting from scratch."
-                )
-                # We also need to wipe the tracker state in this case to ensure we re-evaluate all the models.
-                self.model_tracker = ModelTracker()
-                if os.path.exists(self.tracker_filepath):
-                    bt.logging.warning(
-                        f"Because the uids to eval state failed to load, deleting tracker state at {self.tracker_filepath} so everything is re-evaluated."
-                    )
-                    os.remove(self.tracker_filepath)
+        with self.state_lock:
+            state = {
+                'version': constants.__spec_version__,
+                'hall_of_fame': self.hall_of_fame,
+                'tracker': self.model_tracker.get_state(),
+            }
+        try:
+            with open(os.path.join(self.state_path(), Validator.STATE_FILENAME), 'w') as f:
+                json.dump(state, f, indent=4)
+        except Exception as e:
+            bt.logging.warning(f"Failed to save state: {e}")
 
     def __init__(self):
         self.config = config.validator_config()
@@ -248,21 +220,7 @@ class Validator:
 
         bt.logging.debug(f"Started a new wandb run: {name}")
 
-    def save_state(self):
-        """Saves the state of the validator to a file."""
 
-        bt.logging.trace("Saving validator state.")
-        if not os.path.exists(self.state_path()):
-            os.makedirs(self.state_path())
-
-        with self.pending_uids_to_eval_lock:
-            # Save the state of the validator uids to file.
-            with open(self.uids_filepath, "wb") as f:
-                pickle.dump(self.uids_to_eval, f)
-                pickle.dump(self.pending_uids_to_eval, f)
-
-        # Save the state of the tracker to file.
-        self.model_tracker.save_state(self.tracker_filepath)
 
     def check_top_models(self):
         # At most once per `chain_update_cadence`, check which models are being assigned weight by
