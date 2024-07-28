@@ -706,7 +706,13 @@ class Validator:
             losses_pt_per_uid[uid] = losses_pt
             bt.logging.debug(f"Losses for uid:{uid}, per token: {np.nanmean(losses_pt):.03f} +- {np.nanstd(losses_pt):.03f}, sum {np.nanmean(losses):.01f} +- {np.nanstd(losses):.01f}")
 
-        win_info = validation.compute_wins(losses_per_uid, uid_to_block, self.current_block)
+        win_info = validation.compute_wins(
+                losses_per_uid,
+                uid_to_block,
+                self.current_block,
+                cinfo.get('advantage_initial', constants.advantage_initial),
+                cinfo.get('advantage_decay', constants.advantage_decay_per_epoch),
+        )
         if 'win_rate' not in win_info:
             bt.logging.warning("compute_wins() returned no result")
             return 0
