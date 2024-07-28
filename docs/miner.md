@@ -26,96 +26,38 @@ Miner and validators use hugging face in order to share model state information.
 
 Make sure that any repo you create for uploading is public so that the validators can download from it for evaluation.
 
-2. Clone the repo
+2. Clone the repo, setup venv and install requirements
 
 ```shell
-git clone https://github.com/macrocosm-os/pretraining.git
-```
+# Clone repo
+git clone https://github.com/coldint/coldint_validator.git
+cd coldint_validator
 
-3. Setup your python [virtual environment](https://docs.python.org/3/library/venv.html) or [Conda environment](https://conda.io/projects/conda/en/latest/user-guide/tasks/manage-environments.html#creating-an-environment-with-commands).
+# Setup venv
+python -m venv coldint_venv
+. coldint_venv/bin/activate
 
-4. Install the requirements. From your virtual environment, run
-```shell
-cd pretraining
-python -m pip install -e .
-```
-
-Note: flash-attn may not have their dependencies set up correctly. If you run into issues try installing those requirements separately first:
-```shell
+# Pre-install several packages, there are some dependency issues
 pip install packaging
 pip install wheel
 pip install torch
+
+# Install package including requirements
+pip install -e .
 ```
 
-5. Make sure you've [created a Wallet](https://docs.bittensor.com/getting-started/wallets) and [registered a hotkey](https://docs.bittensor.com/subnets/register-and-participate).
----
+3. Make sure you've [created a Wallet](https://docs.bittensor.com/getting-started/wallets) and [registered a hotkey](https://docs.bittensor.com/subnets/register-and-participate).
 
-# Running the Miner
-
-The mining script uploads a model to hugging face which will be evaluated by validators.
-
-To evaluate your training results the recommended approach is to install the validator and run it with your models injected using the file `benchmark.json`. This allows you to see what would happen in a validator after publishing your model. It also gives valuable insights into how other models are performing.
-
-## Env File
-
-The Miner requires a .env file with your hugging face access token in order to upload models.
-
-Create a `.env` file in the `coldint\_validator` directory and add the following to it:
+4. Produce a model, upload using the [upload script](../scripts/upload_model.py). The script requires access to your hugging face acount. This can be through a read/write token in your environment or in a .env file:
 ```shell
 HF_ACCESS_TOKEN="YOUR_HF_ACCESS_TOKEN"
+echo "HF_ACCESS_TOKEN=YOUR_HF_ACCESS_TOKEN" >.env
 ```
-
-## Starting the Miner
-
-To start your miner the most basic command is
-
-```shell
-python neurons/miner.py --wallet.name coldkey --wallet.hotkey hotkey
-```
-
-- `--wallet.name`: should be the name of the coldkey that contains the hotkey your miner is registered with.
-
-- `--wallet.hotkey`: should be the name of the hotkey that your miner is registered with.
-
-### Flags
-
-The Miner offers some flags to customize properties, such as how to train the model and which hugging face repo to upload to.
-
-You can view the full set of flags by running
-```shell
-python ./neurons/miner.py -h
-```
-
-Some flags you may find useful:
-
-- `--offline`: when set you can run the miner without being registered and it will not attempt to upload the model.
-
-- `--wandb_entity` + `--wandb_project`: when both flags are set the miner will log its training to the provided wandb project.
-
-- `--device`: by default the miner will use your gpu but you can specify with this flag if you have multiple.
-
-#### Training from pre-existing models
-
-- `--load_best`: when set you will download and train the model from the current best miner on the network.
-- `--load_uid`: when passing a uid you will download and train the model from the matching miner on the network.
-- `--load_model_dir`: the path to a local model directory [saved via Hugging Face API].
-- `--load_model`: the path to a safetensors file [not necessarily saved from Hugging Face API].
+(or using ```huggingface-cli login```)
 
 ---
 
-## Manually uploading a model
-
-In some cases you may have failed to upload a model or wish to upload a model without further training.
-
-Due to rate limiting by the Bittensor chain you may only upload a model every 360 blocks (20 minutes).
-
-You can manually upload with the following command:
-```shell
-python scripts/upload_model.py --load_model_dir <path to model> --hf_repo_id my-username/my-project --wallet.name coldkey --wallet.hotkey hotkey
-```
-
-## Running a custom miner
-
-The list of allowed model types can be found in [constants/\_\_init\_\_.py](../constants/__init__.py)
-
-In that file are also the constraints for the total number of parameters and the total size of the model.
+# Benchmarking a model
+To benchmark the performance of a new model, it is recommended to start a validator.
+Then create a benchmark.json file ([example](../benchmark_example.json)) to inject the
+model into the evaluation loop and see how it performs.
