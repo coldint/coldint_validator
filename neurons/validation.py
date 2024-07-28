@@ -30,7 +30,9 @@ import itertools
 def compute_wins(
     losses_per_uid: typing.Dict[int, typing.List[float]],
     uid_to_block: typing.Dict[int, int],
-    current_block
+    current_block,
+    advantage_initial,
+    advantage_decay_per_epoch
 ) -> typing.Dict[int, float]:
     """
     Computes win fractions.
@@ -39,6 +41,8 @@ def compute_wins(
         losses_per_uid (dict): A dictionary of sample losses for each uid.
         uid_to_block (dict): A dictionary of blocks for each uid.
         current_block (int): current block id
+        advantage_initial (float)
+        advantage_decay_per_epoch (float)
     Returns:
         dictionary: computed dictionaries uid->value
                         wins
@@ -62,8 +66,8 @@ def compute_wins(
             advantage_factor = 1
         else:
             # model from before current_block
-            advantage_decay = constants.advantage_decay_per_epoch**delta_epochs
-            advantage_factor = 1 - constants.advantage_initial * advantage_decay
+            advantage_decay = advantage_decay_per_epoch**delta_epochs
+            advantage_factor = 1 - advantage_initial * advantage_decay
         uid_advantage_factors[uid] = advantage_factor
 
     # For each sample, determine winner and award 1 point
