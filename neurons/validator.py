@@ -20,7 +20,7 @@ import copy
 import datetime as dt
 import functools
 import os
-import json
+import orjson
 import math
 import pickle
 import time
@@ -83,8 +83,8 @@ class Validator:
         state_fn = os.path.join(self.state_path(), Validator.STATE_FILENAME)
         if os.path.exists(state_fn):
             try:
-                with open(state_fn) as f:
-                    state = json.load(f)
+                with open(state_fn, 'rb') as f:
+                    state = orjson.loads(f.read())
             except Exception as e:
                 bt.logging.info(f"Invalid state file: {e}")
 
@@ -113,8 +113,8 @@ class Validator:
                 'cstate': self.cstate,
             }
         try:
-            with open(os.path.join(self.state_path(), Validator.STATE_FILENAME), 'w') as f:
-                json.dump(state, f, indent=4)
+            with open(os.path.join(self.state_path(), Validator.STATE_FILENAME), 'wb') as f:
+                f.write(orjson.dumps(state, option=orjson.OPT_INDENT_2|orjson.OPT_NON_STR_KEYS|orjson.OPT_SERIALIZE_NUMPY))
         except Exception as e:
             bt.logging.warning(f"Failed to save state: {e}")
 
@@ -565,8 +565,8 @@ class Validator:
         if not os.path.exists(self.BENCHMARK_FILENAME):
             return {}
         try:
-            with open(self.BENCHMARK_FILENAME) as f:
-                d = {int(k): v for k, v in json.load(f).items()}
+            with open(self.BENCHMARK_FILENAME, 'rb') as f:
+                d = {int(k): v for k, v in orjson.loads(f.read()).items()}
             bt.logging.info(f"Loaded benchmark config with {len(d)} items")
             return d
         except Exception as e:
@@ -837,8 +837,8 @@ class Validator:
 
         if self.config.save_step_json:
             try:
-                with open(self.config.save_step_json, 'w') as f:
-                    json.dump(step_log, f)
+                with open(self.config.save_step_json, 'wb') as f:
+                    f.write(orjson.dumps(step_log, option=orjson.OPT_NON_STR_KEYS|orjson.OPT_SERIALIZE_NUMPY))
             except Exception as e:
                 bt.logging.warning(f"Failed to write step json to {self.config.save_step_json}: {e}")
 
@@ -892,7 +892,7 @@ class Validator:
                 self.wandb_run.finish()
                 self.new_wandb_run()
 
-            original_format_json = json.dumps(step_log)
+            original_format_json = orjson.dumps(step_log, option=orjson.OPT_NON_STR_KEYS|orjson.OPT_SERIALIZE_NUMPY).decode()
             uids = step_log["uids"]
             uid_data = step_log["uid_data"]
 
