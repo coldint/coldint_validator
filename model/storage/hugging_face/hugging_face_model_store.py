@@ -20,7 +20,7 @@ class HuggingFaceModelStore(RemoteModelStore):
             raise ValueError("No Hugging Face access token found to write to the hub.")
         return os.getenv("HF_ACCESS_TOKEN")
 
-    async def upload_model(self, model: Model) -> ModelId:
+    async def upload_model(self, model: Model, private=False) -> ModelId:
         """Uploads a trained model to Hugging Face."""
         token = HuggingFaceModelStore.assert_access_token_exists()
 
@@ -29,6 +29,7 @@ class HuggingFaceModelStore(RemoteModelStore):
             repo_id=model.id.namespace + "/" + model.id.name,
             token=token,
             safe_serialization=True,
+            private=private
         )
 
         model_id_with_commit = ModelId(

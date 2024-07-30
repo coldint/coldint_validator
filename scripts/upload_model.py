@@ -117,7 +117,9 @@ async def main(config: bt.config):
             wallet=wallet,
             competition=args.competition,
             subtensor=subtensor,
+            private=True,
         )
+        bt.logging.info("Model uploaded as private, please make public using scripts/change_repo_visibility.py!")
     else:
         parts = args.model_id.split(':')
         if len(parts) != 5:
