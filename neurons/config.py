@@ -33,18 +33,6 @@ def validator_config():
         help="Number of pages used to eval each step.",
     )
     parser.add_argument(
-        "--sample_min",
-        type=int,
-        default=constants.sample_min,
-        help="Number of uids to bring to next eval.",
-    )
-    parser.add_argument(
-        "--sample_max",
-        type=int,
-        default=constants.sample_max,
-        help="Maximum number of new uids to eval each step.",
-    )
-    parser.add_argument(
         "--dont_set_weights",
         action="store_true",
         help="Validator does not set weights on the chain.",

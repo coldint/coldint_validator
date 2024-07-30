@@ -726,8 +726,9 @@ class Validator:
         model_weights /= np.sum(model_weights)
         model_weights = {uid: weight for uid, weight in zip(uids_pool, model_weights)}
 
-        # Sort models by weight / win_rate, keep config.sample_min entries
-        new_uids_pool = list(sorted(model_weights, key=model_weights.get, reverse=True)[:self.config.sample_min])
+        # Sort models by weight / win_rate, keep pool_size entries
+        pool_size = cinfo.get('pool_size', constants.DEFAULT_POOL_SIZE)
+        new_uids_pool = list(sorted(model_weights, key=model_weights.get, reverse=True)[:pool_size])
 
         # Update state: weights and which uids to keep for next run
         with self.state_lock:
