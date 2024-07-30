@@ -77,10 +77,9 @@ advantage_decay_per_epoch = 0.995
 
 # validators number of pages to eval over miners on each step.`
 n_eval_pages = 8
-# validator eval batch min to keep for next loop.
-sample_min = 6
-# validator eval batch max. Difference from min is room to eval newly uploaded models.
-sample_max = 14
+
+DEFAULT_POOL_SIZE = 6
+
 # time required between updates to the chain.
 chain_update_cadence = dt.timedelta(minutes=20)
 # time required between retrying evaluation of a stale model. (First retry will be immediate).
