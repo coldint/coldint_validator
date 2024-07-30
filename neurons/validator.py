@@ -579,7 +579,7 @@ class Validator:
         # Currently, all competitions use the same dataset.
         # Fetch samples that are shared between all competitions
         dataloader = dataset.SubsetFineWebEdu2Loader(
-            batch_size=constants.batch_size,
+            batch_size=1,
             num_pages=0,
             tokenizer=None,
             pack=False
