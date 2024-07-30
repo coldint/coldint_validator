@@ -88,8 +88,6 @@ advantage_decay_per_epoch = 0.995
 
 # validators number of pages to eval over miners on each step.`
 n_eval_pages = 8
-# validator eval batch size.
-batch_size = 1
 # validator eval batch min to keep for next loop.
 sample_min = 6
 # validator eval batch max. Difference from min is room to eval newly uploaded models.
