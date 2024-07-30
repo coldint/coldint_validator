@@ -15,10 +15,10 @@ from transformers import (
 # ---------------------------------
 
 # Release
-__version__ = "0.9.0"
+__version__ = "1.0.0"
 
 # Validator schema version
-__validator_version__ = "0.9.0"
+__validator_version__ = "1.0.0"
 version_split = __validator_version__.split(".")
 __spec_version__ = (
     (1000 * int(version_split[0]))
