@@ -723,7 +723,9 @@ class Validator:
                 for uid in uids_pool
         ])
         model_weights = win_rate**constants.WEIGHT_SKEW_FACTOR
-        model_weights /= np.sum(model_weights)
+        weight_sum = np.sum(model_weights)
+        if weight_sum:
+            model_weights /= weight_sum
         model_weights = {uid: weight for uid, weight in zip(uids_pool, model_weights)}
 
         # Sort models by weight / win_rate, keep pool_size entries
