@@ -117,6 +117,7 @@ async def push(
     remote_model_store: Optional[RemoteModelStore] = None,
     competition = None,
     subtensor = None,
+    private = False,
 ):
     """Pushes the model to Hugging Face and publishes it on the chain for evaluation by validators.
 
@@ -140,9 +141,9 @@ async def push(
     # First upload the model to HuggingFace.
     namespace, name = utils.validate_hf_repo_id(repo)
     model_id = ModelId(namespace=namespace, name=name)
-    model_id = await remote_model_store.upload_model(Model(id=model_id, pt_model=model))
+    model_id = await remote_model_store.upload_model(Model(id=model_id, pt_model=model, private=private))
 
-    bt.logging.success("Uploaded model to hugging face.")
+    bt.logging.success(f"Uploaded model to hugging face. Private = {private}")
 
     bt.logging.info(
         f"Hashing miner hotkey {wallet.hotkey.ss58_address} into the hash before uploading."
