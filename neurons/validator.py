@@ -740,7 +740,7 @@ class Validator:
         win_matrix = win_info.get('matrix', None)
         if win_matrix is not None:
             bt.logging.info(f"Competition {cname} result:")
-            self.print_win_matrix(win_info['matrix'], uid_to_label)
+            self.print_win_matrix(win_info['matrix'], uid_to_label, competition=cname)
 
         # Update step log
         wins = win_info.get('wins', {})
@@ -797,11 +797,11 @@ class Validator:
                 if uid not in ci['uids_pool'] and uid not in ci['uids_pending']:
                     ci['uids_pending'].append(uid)
 
-    def print_win_matrix(self, matrix, uid_to_label={}, show_delta_loss=False):
+    def print_win_matrix(self, matrix, uid_to_label={}, show_delta_loss=False, competition='?'):
         if show_delta_loss:
-            title = "Model win matrix, true wins/adv wins/avg delta loss"
+            title = f"Win matrix compt {competition}, true wins/adv wins/avg delta loss"
         else:
-            title = "Model win matrix, true wins/adv wins"
+            title = f"Win matrix compt {competition}, true wins/adv wins"
         table = Table(title=title)
         table.add_column("win \ lose", justify="right", style="cyan", no_wrap=True)
         for uid in matrix:
