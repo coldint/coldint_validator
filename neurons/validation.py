@@ -83,7 +83,7 @@ def compute_wins(
                 if uid_a_loss > sample_loss[i_uid_b]:
                     won_all = False
                     break
-            if won_all:
+            if won_all and not np.isnan(uid_a_loss) and not np.isinf(uid_a_loss):
                 wins[uid_a] += 1
                 break
 
