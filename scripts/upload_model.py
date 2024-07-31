@@ -17,12 +17,14 @@ import sys
 import time
 import argparse
 import constants
+import huggingface_hub
+import transformers
 from model import model_utils
+from model import competitions
 from model.storage.hugging_face.hugging_face_model_store import HuggingFaceModelStore
 import bittensor as bt
 from utilities import utils
 from model.data import ModelId
-
 from dotenv import load_dotenv
 
 load_dotenv()  # take environment variables from .env.
@@ -60,13 +62,24 @@ def get_config():
     parser.add_argument(
         "--competition",
         type=str,
-        default=constants.COMPETITION_ID,
-        help="Competition to use in model id (defaults to c00)"
+        default=None,
+        help="Competition to use in model id (auto-detect if not specified)"
+    )
+    parser.add_argument(
+        "--check_competition",
+        default=False, action='store_true',
+        help="Check if model allowed in competition"
     )
     parser.add_argument(
         "--model_id",
         type=str,
-        help="Submit model id to chain instead of loading/uploading/downloading"
+        default=None,
+        help="Submit model id to chain instead of loading/uploading/downloading (repo is not touched)"
+    )
+    parser.add_argument(
+        "--keep_private",
+        default=False, action='store_true',
+        help="Keep model private after uploading"
     )
 
     # Include wallet and logging arguments from bittensor
@@ -86,6 +99,16 @@ def get_config():
 async def main(config: bt.config):
     # Create bittensor objects.
     bt.logging(config=config)
+
+    if args.load_model_dir is None and args.model_id is None:
+        bt.logging.error(f"--load_model_dir or --model_id required")
+        return -1
+
+    if args.load_model_dir and args.model_id:
+        bt.logging.warning("--load_moder_dir ignored when specifying --model_id")
+    elif args.load_model_dir and args.hf_repo_id is None:
+        bt.logging.error("--load_moder_dir requires --hf_repo_id to upload")
+        return -1
 
     attempt = 0;
     while True:
@@ -111,15 +134,50 @@ async def main(config: bt.config):
     if args.model_id is None:
         # Load the model from disk and push it to the chain and Hugging Face.
         model = model_utils.load_local_model(config.load_model_dir,dtype=args.dtype)
+
+        if args.competition is None or args.check_competition:
+            compts = competitions.load_competitions(constants.COMPETITIONS_URL)
+        if args.competition is None:
+            valid_cs = competitions.model_get_valid_competitions(model, compts)
+            if len(valid_cs) != 1:
+                bt.logging.warning(f'Unable to determine competition, options: {valid_cs}')
+                return -1
+            bt.logging.info(f"Detected model only valid in competition {valid_cs[0]}, selecting")
+            args.competition = valid_cs[0]
+        if args.check_competition:
+            valid, reason = competitions.validate_model_constraints(model, compts[args.competition])
+            if not valid:
+                bt.logging.warning(f'Model not valid in {args.competition}, reason: {reason}')
+                return -1
+            bt.logging.warning(f'Model valid in competition {args.competition}')
+
+        # First make repo and set to private; otherwise existing repos will remain public
+        huggingface_hub.create_repo(config.hf_repo_id, private=True, exist_ok=True)
+        huggingface_hub.update_repo_visibility(config.hf_repo_id, private=True)
+
+        tokenizer = None
+        try:
+            tokenizer = transformers.AutoTokenizer.from_pretrained(config.load_model_dir)
+            bt.logging.info(f"Including tokenizer {tokenizer}")
+        except:
+            bt.logging.info("No tokenizer found")
+
         await model_utils.push(
             model=model,
             repo=config.hf_repo_id,
             wallet=wallet,
             competition=args.competition,
             subtensor=subtensor,
+            tokenizer=tokenizer,
             private=True,
         )
-        bt.logging.info("Model uploaded as private, please make public using scripts/change_repo_visibility.py!")
+        bt.logging.info("Model pushed successfully")
+        if config.keep_private:
+            bt.logging.warning("Model uploaded as private, please make public using scripts/change_repo_visibility.py!")
+        else:
+            bt.logging.info("Setting repo to public...")
+            huggingface_hub.update_repo_visibility(config.hf_repo_id, private=False)
+            bt.logging.info("Repo is now public")
     else:
         parts = args.model_id.split(':')
         if len(parts) != 5:
