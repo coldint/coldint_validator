@@ -4,7 +4,7 @@ import os
 from huggingface_hub import HfApi
 from model.data import Model, ModelId
 from model.storage.disk import utils
-from transformers import AutoModelForCausalLM
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from model.storage.remote_model_store import RemoteModelStore
 import constants
@@ -20,11 +20,18 @@ class HuggingFaceModelStore(RemoteModelStore):
             raise ValueError("No Hugging Face access token found to write to the hub.")
         return os.getenv("HF_ACCESS_TOKEN")
 
-    async def upload_model(self, model: Model, private=False) -> ModelId:
+    async def upload_model(self, model: Model, tokenizer=None, private=False) -> ModelId:
         """Uploads a trained model to Hugging Face."""
         token = HuggingFaceModelStore.assert_access_token_exists()
 
-        # PreTrainedModel.save_pretrained only saves locally
+        # Upload tokenizer first (if requested), so that it is included in the hash
+        if tokenizer:
+            tokenizer.push_to_hub(
+                repo_id=model.id.namespace + "/" + model.id.name,
+                token=token,
+                private=private
+            )
+
         commit_info = model.pt_model.push_to_hub(
             repo_id=model.id.namespace + "/" + model.id.name,
             token=token,
@@ -66,6 +73,16 @@ class HuggingFaceModelStore(RemoteModelStore):
             raise ValueError(
                 f"Hugging Face repo over maximum size limit. Size {size}. Limit {model_size_limit}."
             )
+
+        try:
+            # Include tokenizer if present in repo
+            tokenizer = AutoTokenizer.from_pretrained(
+                repo_id,
+                revision=model_id.commit,
+                cache_dir=local_path,
+            )
+        except:
+            pass
 
         # Transformers library can pick up a model based on the hugging face path (username/model) + rev.
         model = AutoModelForCausalLM.from_pretrained(
