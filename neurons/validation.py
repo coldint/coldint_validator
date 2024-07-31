@@ -46,17 +46,16 @@ def compute_wins(
                         advantage_factors
                         matrix {uid_a -> {uid_b -> info}}
     """
-    uids = list(losses_per_uid.keys())
-    if len(uids) == 0:
+    uids_sorted = sorted(losses_per_uid.keys(), key=lambda x: uid_to_block.get(x))
+    if len(uids_sorted) == 0:
         return {}
-    wins = {uid: 0 for uid in uids}
+    wins = {uid: 0 for uid in uids_sorted}
     losses_per_uid = {uid: np.array(losses) for uid, losses in losses_per_uid.items()}
 
-    # Sort UIDS by block and determine advantage factors
-    uids_sorted = sorted(uids, key=lambda x: uid_to_block.get(x))
+    # Determine advantage factors
     uid_advantage_factors = {}
     for uid in uids_sorted:
-        delta_blocks = current_block - uid_to_block[uid]
+        delta_blocks = current_block - uid_to_block.get(uid, 1<<31)
         delta_epochs = delta_blocks / constants.blocks_per_epoch
         if delta_epochs < 0 or math.isinf(delta_epochs):
             # model from after current_block (through benchmark)
@@ -76,7 +75,7 @@ def compute_wins(
             # uid_a should win from all other models using its advantage factor
             uid_a_loss = sample_loss[i_uid_a] * uid_advantage_factors[uid_a]
             won_all = True
-            for i_uid_b in range(i_uid_a+1,len(uids)):
+            for i_uid_b in range(i_uid_a+1,len(uids_sorted)):
                 if uid_a_loss > sample_loss[i_uid_b]:
                     won_all = False
                     break
@@ -87,7 +86,7 @@ def compute_wins(
     win_fractions = {uid: n_wins / n_samples for uid,n_wins in wins.items()}
 
     # Wins matrix (informative only)
-    matrix = {uid_a:{uid_b:None for uid_b in uids} for uid_a in uids}
+    matrix = {uid_a:{uid_b:None for uid_b in uids_sorted} for uid_a in uids_sorted}
     for uid_a, uid_b in itertools.product(uids_sorted, uids_sorted):
         matrix[uid_a][uid_b] = {
             'loss': np.mean(losses_per_uid[uid_a] - losses_per_uid[uid_b]),
