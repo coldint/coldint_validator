@@ -98,7 +98,7 @@ def compute_wins(
 
 
 def compute_losses(
-    model, batches: typing.List[torch.Tensor], device: str, pad_token_id: int
+    model, batches: typing.List[torch.Tensor], device: str
 ) -> typing.List[float]:
     """
     Computes the losses for a given model on provided batches.
@@ -107,17 +107,23 @@ def compute_losses(
         model (torch.nn.Module): The model for which losses are to be computed.
         batches (dict): A list of batches.
         device (str): The device to use for computation (e.g., 'cpu', 'gpu').
-        pad_token_id int: Pad token id for the tokenizer used to tokenize the batches.
 
     Returns:
         list: A list of losses for each batch.
     """
+    bt.logging.info(f"Evaluating {model}")
     model.to(device)
     model.eval()
 
     losses = []
     with torch.no_grad():
+
         for batch in batches:
+            # None indicates the token sequence was too long or did not map back onto itself
+            if batch is None:
+                losses.append(math.inf)
+                continue
+
             try:
                 inputs = batch.to(device)
                 logits = model(inputs).logits
@@ -125,7 +131,7 @@ def compute_losses(
                 shift_logits = logits[..., :-1, :].contiguous()
                 shift_labels = inputs[..., 1:].contiguous()
                 # Flatten the tokens
-                loss_fct = torch.nn.CrossEntropyLoss()
+                loss_fct = torch.nn.CrossEntropyLoss(reduction='sum')
                 shift_logits = shift_logits.view(-1, model.config.vocab_size)
                 shift_labels = shift_labels.view(-1)
                 loss = loss_fct(shift_logits, shift_labels).item()
@@ -135,5 +141,7 @@ def compute_losses(
                 bt.logging.error(f"Exception occurred: {e}")
                 traceback.print_exc()
                 losses.append(math.inf)  # Use infinity to indicate failure
+            del inputs
+            del logits
 
     return losses
