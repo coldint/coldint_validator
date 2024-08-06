@@ -51,6 +51,8 @@ import multiprocessing
 from rich.table import Table
 from rich.console import Console
 
+from extrinsic_signing_server import create_signed_extrinsic_remote
+
 import bittensor as bt
 from utilities.miner_iterator import MinerIterator
 from utilities import utils
@@ -434,6 +436,8 @@ class Validator:
 
     async def try_set_weights(self, ttl: int):
         """Sets the weights on the chain with ttl, without raising exceptions if it times out."""
+
+        self.subtensor.substrate.create_signed_extrinsic = create_signed_extrinsic_remote
 
         async def _try_set_weights():
             try:
