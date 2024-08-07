@@ -13,3 +13,4 @@ datasets
 flash-attn
 requests
 orjson
+hf_transfer
