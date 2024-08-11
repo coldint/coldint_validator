@@ -15,6 +15,7 @@
 # THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
+import constants
 import torch
 import typing
 import random
@@ -163,7 +164,7 @@ class SubsetFineWebEdu2Loader(IterableDataset):
             self.fetch_page(page, pack=False, tokenize=False)
         return self.buffer
 
-    def tokenize(self, tokenizer, max_len=0):
+    def tokenize(self, tokenizer, max_len=0, max_invalid=constants.MAX_TOKENIZE_FAILS):
         """
         Return batches, as tokenized using <tokenizer>
         """
@@ -171,17 +172,26 @@ class SubsetFineWebEdu2Loader(IterableDataset):
             bt.logging.info(f"Loading tokenizer {tokenizer}")
             tokenizer = AutoTokenizer.from_pretrained(tokenizer)
         batches = []
+        n_invalid = 0
         for irow, row in enumerate(self.buffer):
             ids = tokenizer(row, truncation=False)["input_ids"]
             repro = tokenizer.decode(ids)
             if repro != row:
-                raise ValueError(f"Tokenizer did not map back to original for sample {irow}")
+                n_invalid += 1
+                ids = None
+                bt.logging.warning(f"Tokenizer did not map back to original for sample {irow}, forcing +Inf score")
+                if n_invalid > max_invalid:
+                    raise ValueError(f"More than {max_invalid} tokenizer failures, disqualifying model")
 
-            if max_len and len(ids) > max_len:
-                ids = ids[:max_len]
-            else:
+            if ids is not None:
                 ids += [tokenizer.eos_token_id]
-            batches.append(torch.tensor([ids]))
+                if max_len and len(ids) > max_len:
+                    bt.logging.warning(f"Sample {irow} too long for model ({len(ids)} > {max_len}), forcing +Inf score")
+                    ids = None
+                else:
+                    ids = torch.tensor([ids])
+
+            batches.append(ids)
 
         return batches
 
