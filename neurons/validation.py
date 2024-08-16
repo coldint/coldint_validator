@@ -128,6 +128,8 @@ def compute_losses(
                 losses.append(math.inf)
                 continue
 
+            inputs = None
+            logits = None
             try:
                 inputs = batch.to(device)
                 logits = model(inputs).logits
@@ -143,7 +145,7 @@ def compute_losses(
                 losses.append(loss)
             except Exception as e:
                 bt.logging.error(f"Exception occurred: {e}")
-                traceback.print_exc()
+                bt.logging.error(traceback.format_exc())
                 losses.append(math.inf)  # Use infinity to indicate failure
             del inputs
             del logits
