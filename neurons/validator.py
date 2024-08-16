@@ -634,12 +634,10 @@ class Validator:
             bt.logging.trace(f"Computing model losses for uid {uid}.")
             metadata = self.get_uid_metadata(uid)
 
-            losses = [math.inf]*n_batches
-            losses_pt = losses.copy()
+            losses_per_uid[uid] = [math.inf]*n_batches
+            losses_pt_per_uid[uid] = losses_per_uid[uid].copy()
             if metadata is None:
                 bt.logging.debug(f"Unable to load metadata for {uid}. Setting loss to infinity.")
-                losses_per_uid[uid] = losses
-                losses_pt_per_uid[uid] = losses_pt
                 continue
             try:
                 uid_to_block[uid] = metadata.block if metadata.block is not None else 1<<31
@@ -674,14 +672,15 @@ class Validator:
                     bt.logging.info(f"Model for uid {uid} violates competition {cname} constraints: {reason}")
 
                 del model_i
+
+                losses_per_uid[uid] = losses
+                losses_pt_per_uid[uid] = losses_pt
+                bt.logging.debug(f"Losses for uid:{uid}, per token: {naninf_mean(losses_pt):.03f} +- {naninf_std(losses_pt):.03f}, sum {naninf_mean(losses):.01f} +- {naninf_std(losses):.01f}")
+
             except Exception as e:
                 bt.logging.error(
                     f"Error in eval loop: {e}. Setting losses for uid: {uid} to infinity.\n{traceback.format_exc()}"
                 )
-
-            losses_per_uid[uid] = losses
-            losses_pt_per_uid[uid] = losses_pt
-            bt.logging.debug(f"Losses for uid:{uid}, per token: {np.nanmean(losses_pt):.03f} +- {np.nanstd(losses_pt):.03f}, sum {np.nanmean(losses):.01f} +- {np.nanstd(losses):.01f}")
 
         win_info = validation.compute_wins(
                 losses_per_uid,
