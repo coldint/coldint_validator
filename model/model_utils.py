@@ -261,3 +261,15 @@ async def load_remote_model(
         model_metadata.id, download_dir
     )
     return model.pt_model
+
+def get_model_max_sequence_len(mdl):
+    '''
+    Different model families use different names to describe the maximum sequence
+    length; determine one that works.
+    '''
+    options = ["max_position_embeddings", "n_positions", "seq_len", "seq_length", "n_ctx", "sliding_window"]
+    for o in options:
+        val = getattr(mdl.config, o, None)
+        if val:
+            return val
+    return None
