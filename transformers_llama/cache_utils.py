@@ -377,6 +377,10 @@ class DynamicCache(Cache):
         if layer_idx == 0:
             self._seen_tokens += key_states.shape[-2]
 
+        while len(self.key_cache)<layer_idx:
+            self.key_cache.append(None)
+            self.value_cache.append(None)
+
         # Update the cache
         if len(self.key_cache) <= layer_idx:
             self.key_cache.append(key_states)
@@ -559,6 +563,10 @@ class OffloadedCache(DynamicCache):
         # Update the number of seen tokens
         if layer_idx == 0:
             self._seen_tokens += key_states.shape[-2]
+
+        while len(self.key_cache)<layer_idx:
+            self.key_cache.append(None)
+            self.value_cache.append(None)
 
         # Update the cache
         if len(self.key_cache) <= layer_idx:

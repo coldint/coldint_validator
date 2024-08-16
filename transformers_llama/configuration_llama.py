@@ -196,6 +196,10 @@ class LlamaConfig(PretrainedConfig):
             self.rope_scaling["rope_type"] = self.rope_scaling["type"]
         rope_config_validation(self)
 
+        # sliced Llama features
+        self.start_at_layer = None
+        self.return_states_at_layer = None
+
         super().__init__(
             pad_token_id=pad_token_id,
             bos_token_id=bos_token_id,

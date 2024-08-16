@@ -984,7 +984,17 @@ class LlamaModel(LlamaPreTrainedModel):
         all_self_attns = () if output_attentions else None
         next_decoder_cache = None
 
-        for decoder_layer in self.layers:
+        partial = False
+        for layer_idx,decoder_layer in enumerate(self.layers):
+            # start/return: start in some layer and return in another
+            if self.config.return_states_at_layer is not None:
+                if layer_idx == self.config.return_states_at_layer:
+                    partial = True
+                    break # cannot return here as we need to return proper object
+            if self.config.start_at_layer is not None:
+                if layer_idx < self.config.start_at_layer:
+                    continue
+
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
 
@@ -1020,7 +1030,8 @@ class LlamaModel(LlamaPreTrainedModel):
             if output_attentions:
                 all_self_attns += (layer_outputs[1],)
 
-        hidden_states = self.norm(hidden_states)
+        if not partial:
+            hidden_states = self.norm(hidden_states)
 
         # add hidden states from the last decoder layer
         if output_hidden_states:
@@ -1111,7 +1122,7 @@ class LlamaModel(LlamaPreTrainedModel):
         return causal_mask
 
 
-class LlamaForCausalLM(LlamaPreTrainedModel):
+class SlicedLlamaForCausalLM(LlamaPreTrainedModel):
     _tied_weights_keys = ["lm_head.weight"]
 
     def __init__(self, config):
