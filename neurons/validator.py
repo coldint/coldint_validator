@@ -54,6 +54,7 @@ import bittensor as bt
 from utilities.miner_iterator import MinerIterator
 from utilities import utils
 from utilities.perf_monitor import PerfMonitor
+from utilities.mathutils import *
 
 TRANSFORMERS_VERSION_MIN     = "4.41.2"
 
@@ -729,10 +730,11 @@ class Validator:
                 "label": uid_to_label.get(uid, ''),
                 "block": uid_to_block.get(uid, 1<<31),
                 "losses": losses_per_uid[uid],
-                "loss_pt_avg": np.nanmean(losses_pt_per_uid[uid]),
-                "loss_pt_std": np.nanstd(losses_pt_per_uid[uid]),
-                "loss_sum_avg": np.nanmean(losses_per_uid[uid]),
-                "loss_sum_std": np.nanstd(losses_per_uid[uid]),
+                "n_samples": naninf_count(losses_per_uid[uid]),
+                "loss_pt_avg": naninf_mean(losses_pt_per_uid[uid]),
+                "loss_pt_std": naninf_std(losses_pt_per_uid[uid]),
+                "loss_sum_avg": naninf_mean(losses_per_uid[uid]),
+                "loss_sum_std": naninf_std(losses_per_uid[uid]),
                 "adv_factor": 100*(1-advantage_factors.get(uid,1)),
                 "win_rate": win_rate.get(uid, 0),
                 "win_total": wins.get(uid, 0),
