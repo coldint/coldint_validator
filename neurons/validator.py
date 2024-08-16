@@ -644,6 +644,13 @@ class Validator:
                 uid_to_label[uid] = metadata.id.format_label()
                 bt.logging.debug(f"Evaluating uid {uid} ({uid_to_label[uid]}) from block {uid_to_block[uid]}")
 
+                model_i = self.local_store.retrieve_model(metadata.hotkey, metadata.id, path=metadata.path)
+                mdl_allowed, reason = competitions.validate_model_constraints(model_i.pt_model, cinfo)
+                if not mdl_allowed:
+                    bt.logging.info(f"Model for uid {uid} violates competition {cname} constraints: {reason}")
+                    del model_i
+                    continue
+
                 # Get model tokenizer if no competition-wide tokenizer is set
                 mdl_batches = batches
                 if mdl_batches is None:
@@ -653,23 +660,18 @@ class Validator:
                             metadata.id) if metadata.path is None else metadata.path
                     mdl_batches = dataloader.tokenize(model_path, max_len=constants.MAX_SEQUENCE_LEN)
 
-                model_i = self.local_store.retrieve_model(metadata.hotkey, metadata.id, path=metadata.path)
-                mdl_allowed, reason = competitions.validate_model_constraints(model_i.pt_model, cinfo)
-                if mdl_allowed:
-                    losses = utils.run_in_subprocess(
-                        functools.partial(
-                            validation.compute_losses,
-                            model_i.pt_model,
-                            mdl_batches,
-                            self.config.device
-                        ),
-                        ttl=360,
-                        mode="spawn",
-                    )
-                    losses_pt = [loss_sum / len(batch[0]) for loss_sum, batch in zip(losses, mdl_batches)]
-                    n_evaluated += 1
-                else:
-                    bt.logging.info(f"Model for uid {uid} violates competition {cname} constraints: {reason}")
+                losses = utils.run_in_subprocess(
+                    functools.partial(
+                        validation.compute_losses,
+                        model_i.pt_model,
+                        mdl_batches,
+                        self.config.device
+                    ),
+                    ttl=360,
+                    mode="spawn",
+                )
+                losses_pt = [loss_sum / len(batch[0]) for loss_sum, batch in zip(losses, mdl_batches)]
+                n_evaluated += 1
 
                 del model_i
 
