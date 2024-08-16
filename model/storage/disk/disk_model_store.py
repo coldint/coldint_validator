@@ -10,6 +10,15 @@ from model.storage.local_model_store import LocalModelStore
 from transformers import AutoModelForCausalLM
 from pathlib import Path
 
+# Override LlamaForCausalLM, Phi3ForCausalLM and PhiForCausalLM with versions that support slicing.
+from transformers import __version__ as tf_version
+if tf_version == '4.44.0':
+    import transformers_llama
+    import transformers_phi3
+    import transformers_phi
+else:
+    import warnings
+    warnings.warn("Please run using transformers=4.44.0 to enjoy sliced Llama / Phi and reduce GPU RAM usage.")
 
 class DiskModelStore(LocalModelStore):
     """Local storage based implementation for storing and retrieving a model on disk."""

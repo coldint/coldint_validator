@@ -101,6 +101,18 @@ def compute_wins(
     return dict(wins=wins, win_rate=win_fractions, advantage_factors=uid_advantage_factors, matrix=matrix)
 
 
+def compute_losses_sliced(
+    model, batches: typing.List[torch.Tensor], device: str, n_slices=1
+) -> typing.List[float]:
+    with torch.no_grad():
+        sliced = model.sliced(
+            n_slices=n_slices,
+            device=device,
+        )
+        losses = sliced.evaluate_samples(batches,reduction='sum')
+        bt.logging.info(f'computed sliced losses: {losses[:10]}...')
+        return losses
+
 def compute_losses(
     model, batches: typing.List[torch.Tensor], device: str
 ) -> typing.List[float]:
@@ -116,6 +128,20 @@ def compute_losses(
         list: A list of losses for each batch.
     """
     bt.logging.info(f"Evaluating {model}")
+
+    if hasattr(model,'sliced'):
+        model_bytes = model.num_parameters()*model.dtype.itemsize
+        gpu_ram = torch.cuda.get_device_properties(device).total_memory
+        # The fraction below is somewhat arbitrary. The precise amount of ram
+        # needed depends on many factors. TODO.
+        arbitrary_fraction = 0.65
+        use_gpu_ram = int(arbitrary_fraction * gpu_ram)
+        if model_bytes > use_gpu_ram:
+            # This assumes all slices are created equal, which isn't true.
+            n_slices = (model_bytes+use_gpu_ram)//use_gpu_ram
+            bt.logging.info(f"Performing {n_slices}-sliced eval: model ({model_bytes}) > {arbitrary_fraction} * gpu ram ({gpu_ram})")
+            return compute_losses_sliced(model,batches,device,n_slices=n_slices)
+
     model.to(device)
     model.eval()
 
