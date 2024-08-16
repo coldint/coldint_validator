@@ -668,6 +668,7 @@ class Validator:
                     mdl_batches = dataloader.tokenize(
                             model_path,
                             max_len=max_len,
+                            max_invalid=cinfo.get('max_tokenize_fails', constants.MAX_TOKENIZE_FAILS)
                     )
 
                 losses = utils.run_in_subprocess(
@@ -680,7 +681,7 @@ class Validator:
                     ttl=360,
                     mode="spawn",
                 )
-                losses_pt = [loss_sum / len(batch[0]) for loss_sum, batch in zip(losses, mdl_batches)]
+                losses_pt = [loss_sum / len(batch[0]) if batch is not None else math.inf for loss_sum, batch in zip(losses, mdl_batches)]
                 n_evaluated += 1
 
                 del model_i
