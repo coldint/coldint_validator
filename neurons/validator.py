@@ -616,7 +616,12 @@ class Validator:
         n_batches = len(dataloader.buffer)
         batches = None
         if 'tokenizer' in cinfo:
-            batches = dataloader.tokenize(cinfo['tokenizer'], max_len=constants.MAX_SEQUENCE_LEN)
+            # Competition-wide tokenizer --> fixed sequence length
+            batches = dataloader.tokenize(
+                    cinfo['tokenizer'],
+                    max_len=cinfo.get('max_sequence_len', constants.MAX_SEQUENCE_LEN),
+                    max_invalid=cinfo.get('max_tokenize_fails', constants.MAX_TOKENIZE_FAILS)
+            )
 
         # Compute model losses on batches.
         losses_per_uid = {uid: None for uid in uids_pool}
