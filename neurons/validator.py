@@ -31,6 +31,7 @@ import numpy as np
 import requests
 import sys
 import transformers
+from packaging.version import Version
 
 import wandb
 import constants
@@ -942,7 +943,7 @@ class Validator:
 
 
 if __name__ == "__main__":
-    if transformers.__version__ < TRANSFORMERS_VERSION_MIN:
+    if Version(transformers.__version__) < Version(TRANSFORMERS_VERSION_MIN):
         bt.logging.error(f"Transformers version >= {TRANSFORMERS_VERSION_MIN} required")
         sys.exit()
 
