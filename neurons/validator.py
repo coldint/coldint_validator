@@ -308,7 +308,7 @@ class Validator:
                 )
                 if updated:
                     self.add_uid_to_competition(cur_uid, hotkey)
-                bt.logging.debug(f"Visited UID {cur_uid}, updated={updated}, commitment: {metadata.id.format_label() if metadata else '---'}")
+                bt.logging.debug(f"Visited UID {cur_uid}/{hotkey}, updated={updated}, commitment: {metadata.id.format_label() if metadata else '---'}")
             except Exception as e:
                 bt.logging.error(
                     f"Failed to sync model for UID {cur_uid}: {e} \n {traceback.format_exc()}"
