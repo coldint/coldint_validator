@@ -654,11 +654,21 @@ class Validator:
                 # Get model tokenizer if no competition-wide tokenizer is set
                 mdl_batches = batches
                 if mdl_batches is None:
+                    max_len = cinfo.get('max_sequence_len', None)
+                    if max_len is None:
+                        max_len = model_utils.get_model_max_sequence_len(model_i.pt_model)
+                    if max_len is None:
+                        bt.logging.info(f"Unable to determine max sequence length for model for uid {uid}")
+                        del model_i
+                        continue
                     model_path = disk_utils.get_local_model_snapshot_dir(
                             self.local_store.base_dir,
                             metadata.hotkey,
                             metadata.id) if metadata.path is None else metadata.path
-                    mdl_batches = dataloader.tokenize(model_path, max_len=constants.MAX_SEQUENCE_LEN)
+                    mdl_batches = dataloader.tokenize(
+                            model_path,
+                            max_len=max_len,
+                    )
 
                 losses = utils.run_in_subprocess(
                     functools.partial(
