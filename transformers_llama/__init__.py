@@ -116,3 +116,17 @@ else:
     import sys
 
     sys.modules[__name__] = _LazyModule(__name__, globals()["__file__"], _import_structure, module_spec=__spec__)
+
+    # Make this module a drop-in replacement for regular LlamaForCausalLM
+    from transformers import AutoConfig, AutoModelForCausalLM
+    from . import LlamaConfig, SlicedLlamaForCausalLM
+    AutoConfig.register(
+            'llama',
+            LlamaConfig,
+            exist_ok=True
+    )
+    AutoModelForCausalLM.register(
+            LlamaConfig,
+            SlicedLlamaForCausalLM,
+            exist_ok=True
+    )
