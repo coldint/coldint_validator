@@ -3,6 +3,7 @@ import multiprocessing
 import os
 import time
 import resource
+import traceback
 from typing import Any, List, Optional, Tuple
 import bittensor as bt
 import constants
@@ -61,10 +62,11 @@ def _wrapped_func(func: functools.partial, queue: multiprocessing.Queue):
     resource.setrlimit(resource.RLIMIT_NOFILE, (65000, 65000))
     try:
         result = func()
-        queue.put(result)
+        queue.put((result,))
     except (Exception, BaseException) as e:
         # Catch exceptions here to add them to the queue.
-        queue.put(e)
+        stack_trace = traceback.format_exc()
+        queue.put((e,stack_trace))
 
 
 def run_in_subprocess(func: functools.partial, ttl: int, mode="fork") -> Any:
@@ -91,15 +93,23 @@ def run_in_subprocess(func: functools.partial, ttl: int, mode="fork") -> Any:
         raise TimeoutError(f"Failed to {func.func.__name__} after {ttl} seconds")
 
     # Raises an error if the queue is empty. This is fine. It means our subprocess timed out.
-    result = queue.get(block=False)
+    try:
+        result = queue.get(block=False)
+    except Exception as e:
+        raise Exception(f"Failed to get result from subprocess {func.func.__name__}(*args={func.args},**kwargs={func.keywords}): {e}") from None
+
+    if not isinstance(result,tuple):
+        raise Exception(f"Unexpected result from subprocess, type {type(result)}: {result}")
 
     # If we put an exception on the queue then raise instead of returning.
-    if isinstance(result, Exception):
-        raise result
-    if isinstance(result, BaseException):
-        raise Exception(f"BaseException raised in subprocess: {str(result)}")
+    if isinstance(result[0], Exception):
+        bt.logging.error(f"Exception in subprocess:\n{result[1]}")
+        raise result[0]
+    if isinstance(result[0], BaseException):
+        bt.logging.error(f"BaseException in subprocess:\n{result[1]}")
+        raise Exception(f"BaseException raised in subprocess: {str(result[0])}")
 
-    return result
+    return result[0]
 
 
 def get_version(filepath: str) -> Optional[int]:
