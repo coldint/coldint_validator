@@ -67,3 +67,17 @@ else:
     import sys
 
     sys.modules[__name__] = _LazyModule(__name__, globals()["__file__"], _import_structure, module_spec=__spec__)
+
+    # Make this module a drop-in replacement for regular Phi3ForCausalLM
+    from transformers import AutoConfig, AutoModelForCausalLM
+    from . import Phi3Config, SlicedPhi3ForCausalLM
+    AutoConfig.register(
+            'phi3',
+            Phi3Config,
+            exist_ok=True
+    )
+    AutoModelForCausalLM.register(
+            Phi3Config,
+            SlicedPhi3ForCausalLM,
+            exist_ok=True
+    )
