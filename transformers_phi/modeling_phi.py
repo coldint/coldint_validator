@@ -18,6 +18,9 @@
 """PyTorch Phi model."""
 
 import math
+import copy
+import numpy as np
+import warnings
 from typing import List, Optional, Tuple, Union
 
 import torch
@@ -1132,6 +1135,161 @@ class PhiModel(PhiPreTrainedModel):
         return causal_mask
 
 
+class SlicedPhiForCausalLMWrapper:
+    def __init__(self, model=None, n_slices=2, start_layers=None, device=None):
+        self.model = model
+        self.device = device
+        if start_layers is None:
+            start_layers = self.gen_start_layers(model.config.num_hidden_layers,n_slices)
+        start_layers.append(model.config.num_hidden_layers)
+        self.start_layers = start_layers
+        self.gen_slices()
+
+    def __repr__(self):
+        return f'SlicedPhiForCausalLMWrapper(n_slices={len(self.slices)},device={self.device},start_layers={self.start_layers[:-1]},model={self.model})'
+
+    def __call__(self,*args,**kwargs):
+        raise Exception("cannot call SlicedPhiForCausalLMWrapper(), use .evaluate_samples() to batch evaluate samples instead")
+
+    def to(self,*args,**kwargs):
+        warnings.warn('No need to .to() on SlicedPhiForCausalLMWrapper; set the .device property instead')
+
+    def evaluate_samples(self,samples,reduction='mean'):
+        """
+        Evaluate losses of samples on sliced model.
+        """
+        output_states = []
+        for slice_idx,model_slice in enumerate(self.slices):
+            model_slice = model_slice.to(self.device)
+            model_params = model_slice.num_parameters()
+            state_size = sum([s.numel() for s in output_states if s is not None])
+            logger.info(f'evaluating slice {slice_idx}, n_params={model_params}, state_size={state_size}...')
+            losses = self.evaluate_losses_slice(model_slice,samples=samples,output_states=output_states,reduction=reduction)
+            model_slice = model_slice.to('cpu')
+            torch.cuda.empty_cache()
+        return losses
+
+    def evaluate_losses_slice(self,model_slice,samples=None,output_states=[],reduction='mean'):
+        is_first_slice = model_slice.config.start_at_layer == 0
+        is_last_slice = model_slice.config.return_states_at_layer == model_slice.config.num_hidden_layers
+        if len(output_states)==0:
+            output_states.extend([None]*len(samples))
+        losses = None
+        if is_last_slice:
+            losses = [np.inf]*len(samples)
+
+        for i,sample in enumerate(samples):
+            if sample is None:
+                continue
+            ids = None
+            if is_first_slice or is_last_slice:
+                ids = sample.to(self.device)
+            sample_state = None
+            try:
+                if is_first_slice:
+                    # inject token ids
+                    logger.debug(f'evaluating sample {i} of length {len(ids[0])}/{len(sample[0])} in first slice...')
+                    outputs = model_slice.model(input_ids=ids)
+                    sample_state = outputs.last_hidden_state
+                else:
+                    # resume with hidden states
+                    logger.debug(f'evaluating sample {i} in later slice...')
+                    outputs = model_slice.model(inputs_embeds=output_states[i])
+                    sample_state = outputs.last_hidden_state
+            except Exception as e:
+                logger.warning(f'Exception evaluating sample {i}, length {len(sample[0])}: {e}')
+
+            output_states[i] = sample_state
+
+            if not is_last_slice:
+                continue
+            if output_states[i] is None:
+                continue
+
+            # calculate losses
+            logits = model_slice.lm_head(output_states[i][0])
+            logits = logits.float()
+            labels = ids
+            shift_logits = logits[..., :-1, :].contiguous()
+            shift_labels = labels[..., 1:].contiguous()
+            # Flatten the tokens
+            loss_fct = torch.nn.CrossEntropyLoss(reduction=reduction)
+            shift_logits = shift_logits.view(-1, model_slice.config.vocab_size)
+            shift_labels = shift_labels.view(-1)
+            loss = loss_fct(shift_logits, shift_labels)
+            loss_value = loss.detach().item()
+            logger.debug(f'loss: {loss_value}')
+            losses[i] = loss_value
+
+        return losses
+
+    def gen_slices(self):
+        model_data = {}
+        # strip model, restore later
+        for pname, p in self.model.named_parameters():
+            model_data[pname] = p.data
+            p.data = torch.zeros(0)
+
+        self.slices = []
+        for i,layer_from in enumerate(self.start_layers[:-1]):
+            layer_to = self.start_layers[i+1]
+            logger.info(f'Generating slice #{i}: {layer_from}..{layer_to}')
+            params = self.filter_params(layer_from=layer_from,layer_to=layer_to)
+            model_slice = copy.deepcopy(self.model) # copy of empty model
+            for pname,p in model_slice.named_parameters():
+                if pname in params['param_names_kept']:
+                    p.data = model_data[pname]
+            model_slice.config.start_at_layer = layer_from
+            model_slice.config.return_states_at_layer = layer_to
+            self.slices.append(model_slice)
+
+    @staticmethod
+    def gen_start_layers(n_layers,n_slices):
+        """
+        Generate a list of starting indices for each slice, equally distributing layers over n slices.
+        """
+        n_slices = min(n_slices,n_layers)
+        start_layers = [0]
+        while len(start_layers)<n_slices:
+            last_start = start_layers[-1]
+            remaining_slices = n_slices-len(start_layers)
+            remaining_layers = n_layers-last_start
+            next_start = last_start + remaining_layers//(remaining_slices+1)
+            start_layers.append(next_start)
+        return start_layers
+
+    def filter_params(self,layer_from=None,layer_to=None):
+        """
+        Filter parameters to use for a particular range of layers.
+        embed tokens is considered part of the first layer.
+        lm_head and model.norm are considered part of the last layer.
+        """
+        params = []
+        param_names_kept = set()
+        param_idx_to_name = {}
+        for pname, p in self.model.named_parameters():
+            if 'embed_tokens' in pname or 'embed_dropout' in pname:
+                if layer_from > 0: continue
+            elif 'lm_head' in pname or 'final_layernorm' in pname:
+                if layer_to < self.model.config.num_hidden_layers: continue
+            else:
+                keep = False
+                for i in range(layer_from,layer_to):
+                    if f'layers.{i}.' in pname:
+                        keep = True
+                        break
+                if not keep:
+                    continue
+            param_idx_to_name[len(params)] = pname
+            param_names_kept.add(pname)
+            params.append(p)
+        return {
+                'param_idx_to_name':param_idx_to_name,
+                'param_names_kept':param_names_kept,
+                'params':params,
+        }
+
+
 class SlicedPhiForCausalLM(PhiPreTrainedModel):
     _tied_weights_keys = ["lm_head.weight"]
 
@@ -1144,6 +1302,12 @@ class SlicedPhiForCausalLM(PhiPreTrainedModel):
 
         # Initialize weights and apply final processing
         self.post_init()
+
+    def sliced(self,**kwargs):
+        """
+        Generate a container object with this model sliced into pieces.
+        """
+        return SlicedPhiForCausalLMWrapper(model=self,**kwargs)
 
     # Copied from transformers.models.llama.modeling_llama.LlamaForCausalLM.get_input_embeddings
     def get_input_embeddings(self):
