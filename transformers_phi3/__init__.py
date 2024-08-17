@@ -39,7 +39,7 @@ else:
     _import_structure["modeling_phi3"] = [
         "Phi3PreTrainedModel",
         "Phi3Model",
-        "Phi3ForCausalLM",
+        "SlicedPhi3ForCausalLM",
         "Phi3ForSequenceClassification",
         "Phi3ForTokenClassification",
     ]
@@ -55,7 +55,7 @@ if TYPE_CHECKING:
         pass
     else:
         from .modeling_phi3 import (
-            Phi3ForCausalLM,
+            SlicedPhi3ForCausalLM,
             Phi3ForSequenceClassification,
             Phi3ForTokenClassification,
             Phi3Model,

@@ -161,6 +161,10 @@ class Phi3Config(PretrainedConfig):
         self._rope_scaling_validation()
         self.sliding_window = sliding_window
 
+        # sliced Phi3 features
+        self.start_at_layer = None
+        self.return_states_at_layer = None
+
         super().__init__(
             bos_token_id=bos_token_id,
             eos_token_id=eos_token_id,
