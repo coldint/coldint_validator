@@ -17,7 +17,7 @@
 
 from typing import TYPE_CHECKING
 
-from ...utils import (
+from transformers.utils import (
     OptionalDependencyNotAvailable,
     _LazyModule,
     is_sentencepiece_available,
