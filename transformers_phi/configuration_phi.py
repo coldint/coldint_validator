@@ -160,6 +160,10 @@ class PhiConfig(PretrainedConfig):
         self.qk_layernorm = qk_layernorm
         self._rope_scaling_validation()
 
+        # sliced Phi features
+        self.start_at_layer = None
+        self.return_states_at_layer = None
+
         super().__init__(
             bos_token_id=bos_token_id,
             eos_token_id=eos_token_id,
