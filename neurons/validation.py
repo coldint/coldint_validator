@@ -145,13 +145,12 @@ def compute_losses(
     model.to(device)
     model.eval()
 
-    losses = []
+    losses = [math.inf]*len(batches) # Use infinity to indicate failure
     with torch.no_grad():
 
-        for batch in batches:
+        for i,batch in enumerate(batches):
             # None indicates the token sequence was too long or did not map back onto itself
             if batch is None:
-                losses.append(math.inf)
                 continue
 
             inputs = None
@@ -166,13 +165,10 @@ def compute_losses(
                 loss_fct = torch.nn.CrossEntropyLoss(reduction='sum')
                 shift_logits = shift_logits.view(-1, model.config.vocab_size)
                 shift_labels = shift_labels.view(-1)
-                loss = loss_fct(shift_logits, shift_labels).item()
-
-                losses.append(loss)
+                losses[i] = loss_fct(shift_logits, shift_labels).item()
             except Exception as e:
                 bt.logging.error(f"Exception occurred: {e}")
                 bt.logging.error(traceback.format_exc())
-                losses.append(math.inf)  # Use infinity to indicate failure
             del inputs
             del logits
 
