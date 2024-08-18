@@ -238,7 +238,7 @@ class Validator:
             bt.logging.warning(f"Metadata for {uid}/{hotkey} not available")
         with self.state_lock:
             for cname, cinfo in self.cstate.items():
-                if cname == meta.id.competition:
+                if meta is not None and cname == meta.id.competition:
                     bt.logging.info(f"Adding {uid} to competition {cname}")
                     if uid not in cinfo['uids_pool'] and uid not in cinfo['uids_pending']:
                         cinfo['uids_pending'].append(uid)
