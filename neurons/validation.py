@@ -147,7 +147,7 @@ def compute_losses(
 
     losses = [math.inf]*len(batches) # Use infinity to indicate failure
     with torch.no_grad():
-
+        cuda_errors = 0
         for i,batch in enumerate(batches):
             # None indicates the token sequence was too long or did not map back onto itself
             if batch is None:
@@ -169,6 +169,11 @@ def compute_losses(
             except Exception as e:
                 bt.logging.error(f"Exception occurred: {e}")
                 bt.logging.error(traceback.format_exc())
+                if 'CUDA error' in str(e):
+                    cuda_errors += 1
+                    if cuda_errors>=4:
+                        bt.logging.error(f'{cuda_errors} CUDA errors, bailing out of evaluation loop')
+                        break
             del inputs
             del logits
 
