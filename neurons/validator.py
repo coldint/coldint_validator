@@ -617,6 +617,7 @@ class Validator:
         # Competition-wide tokenizer
         n_batches = len(dataloader.buffer)
         batches = None
+        batches_max_token_id = None
         if 'tokenizer' in cinfo:
             # Competition-wide tokenizer --> fixed sequence length
             batches = dataloader.tokenize(
@@ -624,6 +625,10 @@ class Validator:
                     max_len=cinfo.get('max_sequence_len', constants.MAX_SEQUENCE_LEN),
                     max_invalid=cinfo.get('max_tokenize_fails', constants.MAX_TOKENIZE_FAILS)
             )
+            batches_max_token_id = max(
+                [max(b[0]) for b in batches if b is not None]
+            )
+
 
         # Compute model losses on batches.
         losses_per_uid = {uid: None for uid in uids_pool}
@@ -654,6 +659,7 @@ class Validator:
 
                 # Get model tokenizer if no competition-wide tokenizer is set
                 mdl_batches = batches
+                max_token_id = batches_max_token_id
                 if mdl_batches is None:
                     max_len = cinfo.get('max_sequence_len', None)
                     if max_len is None:
@@ -671,6 +677,21 @@ class Validator:
                             max_len=max_len,
                             max_invalid=cinfo.get('max_tokenize_fails', constants.MAX_TOKENIZE_FAILS)
                     )
+                    max_token_id = max(
+                        [max(b[0]) for b in mdl_batches if b is not None]
+                    )
+
+                embed_size = None
+                try:
+                    embed_size = model_i.pt_model.model.embed_tokens.weight.shape[0]
+                except Exception as e:
+                    # Currently supported models should have the queried parameter, but in case they don't, just skip this check.
+                    bt.logging.warning(f'could not find embed size, skipping check: {e}')
+
+                if embed_size and max_token_id>=embed_size:
+                    bt.logging.error(f"Vocabulary size mismatch between tokenizer and model: {max_token_id} >= {embed_size}, disqualifying model")
+                    del model_i
+                    continue
 
                 losses = utils.run_in_subprocess(
                     functools.partial(
