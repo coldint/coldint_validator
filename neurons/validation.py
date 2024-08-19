@@ -115,7 +115,7 @@ def compute_losses_sliced(
         return losses
 
 def compute_losses(
-    model, batches: typing.List[torch.Tensor], device: str
+    model, allow_sliced: bool, batches: typing.List[torch.Tensor], device: str
 ) -> typing.List[float]:
     """
     Computes the losses for a given model on provided batches.
@@ -130,7 +130,7 @@ def compute_losses(
     """
     bt.logging.info(f"Evaluating {model}")
 
-    if hasattr(model,'sliced'):
+    if allow_sliced and hasattr(model,'sliced'):
         model_bytes = model.num_parameters()*model.dtype.itemsize
         gpu_ram = torch.cuda.get_device_properties(device).total_memory
         # The fraction below is somewhat arbitrary. The precise amount of ram

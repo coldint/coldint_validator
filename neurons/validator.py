@@ -667,6 +667,11 @@ class Validator:
                     bt.logging.info(f"Model for uid {uid} violates competition {cname} constraints: {reason}")
                     del model_i
                     continue
+                allow_sliced = False
+                model_type = type(model_i.pt_model).__name__
+                if 'Sliced' in model_type:
+                    # Test the exact model type name to check whether slicing is allowed by config:
+                    allow_sliced = model_type in cinfo['model_types']
 
                 # Get model tokenizer if no competition-wide tokenizer is set
                 mdl_batches = batches
@@ -708,6 +713,7 @@ class Validator:
                     functools.partial(
                         validation.compute_losses,
                         model_i.pt_model,
+                        allow_sliced,
                         mdl_batches,
                         self.config.device
                     ),
