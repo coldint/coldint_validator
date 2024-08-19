@@ -139,6 +139,7 @@ class Validator:
         torch.backends.cudnn.benchmark = True
 
         # Dont check registration status if offline.
+        self.uid = None
         if not self.config.offline:
             self.uid = utils.assert_registered(self.wallet, self.metagraph)
 
@@ -329,7 +330,16 @@ class Validator:
         self.last_cfg_fetch = now
 
         # Competition info
-        comps = competitions.load_competitions(constants.COMPETITIONS_URL)
+        url = constants.COMPETITIONS_URL
+        comps = None
+        if self.uid is not None:
+            # Check if a dedicated competitions-{uid}.json is available.
+            # This is used to allow targeted tweaks e.g. in case of issues with transformer overrides.
+            vali_url = url.replace('.json',f'-{self.uid}.json')
+            comps = competitions.load_competitions(vali_url)
+        if comps is None:
+            # Load regular competition info.
+            comps = competitions.load_competitions(url)
         if comps is not None:
             with self.state_lock:
                 self.competitions = comps
