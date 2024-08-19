@@ -114,36 +114,9 @@ def compute_losses_sliced(
         bt.logging.info(f'computed sliced losses: {losses[:10]}...')
         return losses
 
-def compute_losses(
-    model, allow_sliced: bool, batches: typing.List[torch.Tensor], device: str
+def compute_losses_regular(
+    model, batches: typing.List[torch.Tensor], device: str
 ) -> typing.List[float]:
-    """
-    Computes the losses for a given model on provided batches.
-
-    Parameters:
-        model (torch.nn.Module): The model for which losses are to be computed.
-        batches (dict): A list of batches.
-        device (str): The device to use for computation (e.g., 'cpu', 'gpu').
-
-    Returns:
-        list: A list of losses for each batch.
-    """
-    bt.logging.info(f"Evaluating model type {type(model).__name__}")
-    bt.logging.debug(f"Model: {model}")
-
-    if allow_sliced and hasattr(model,'sliced'):
-        model_bytes = model.num_parameters()*model.dtype.itemsize
-        gpu_ram = torch.cuda.get_device_properties(device).total_memory
-        # The fraction below is somewhat arbitrary. The precise amount of ram
-        # needed depends on many factors. TODO.
-        arbitrary_fraction = 0.65
-        use_gpu_ram = int(arbitrary_fraction * gpu_ram)
-        if model_bytes > use_gpu_ram:
-            # This assumes all slices are created equal, which isn't true.
-            n_slices = (model_bytes+use_gpu_ram)//use_gpu_ram
-            bt.logging.info(f"Performing {n_slices}-sliced eval: model ({model_bytes}) > {arbitrary_fraction} * gpu ram ({gpu_ram})")
-            return compute_losses_sliced(model,batches,device,n_slices=n_slices)
-
     model.to(device)
     model.eval()
 
@@ -179,4 +152,58 @@ def compute_losses(
             del inputs
             del logits
 
+    bt.logging.info(f'computed losses: {losses[:10]}...')
+
     return losses
+
+def compute_losses(
+    model, allow_sliced: bool, batches: typing.List[torch.Tensor], device: str
+) -> typing.List[float]:
+    """
+    Computes the losses for a given model on provided batches.
+
+    Parameters:
+        model (torch.nn.Module): The model for which losses are to be computed.
+        batches (dict): A list of batches.
+        device (str): The device to use for computation (e.g., 'cpu', 'gpu').
+
+    Returns:
+        list: A list of losses for each batch.
+    """
+    bt.logging.info(f"Evaluating model type {type(model).__name__}")
+    bt.logging.debug(f"Model: {model}")
+
+    # Set to non-zero to compare sliced vs regular loss calculation
+    test_sliced_eval = None
+
+    regular_losses = None
+    sliced_losses = None
+    n_slices = test_sliced_eval
+    if allow_sliced and hasattr(model,'sliced'):
+        model_bytes = model.num_parameters()*model.dtype.itemsize
+        gpu_ram = torch.cuda.get_device_properties(device).total_memory
+        # The fraction below is somewhat arbitrary. The precise amount of ram
+        # needed depends on many factors. TODO.
+        arbitrary_fraction = 0.65
+        use_gpu_ram = int(arbitrary_fraction * gpu_ram)
+        if model_bytes > use_gpu_ram:
+            # This assumes all slices are created equal, which isn't true.
+            n_slices = (model_bytes+use_gpu_ram)//use_gpu_ram
+
+    if n_slices is None or test_sliced_eval:
+        regular_losses = compute_losses_regular(model,batches,device)
+
+    if n_slices is not None:
+        bt.logging.info(f"Performing {n_slices}-sliced eval: model ({model_bytes}) > {arbitrary_fraction} * gpu ram ({gpu_ram})")
+        sliced_losses = compute_losses_sliced(model,batches,device,n_slices=n_slices)
+
+    if regular_losses and sliced_losses:
+        equal = sliced_losses==regular_losses
+        nanequal = naninf_equal(sliced_losses,regular_losses)
+        nanclose = naninf_close(sliced_losses,regular_losses)
+        bt.logging.info(f'sliced losses == regular losses: {equal} / {nanequal} / {nanclose}')
+
+    if regular_losses:
+        return regular_losses
+
+    return sliced_losses
