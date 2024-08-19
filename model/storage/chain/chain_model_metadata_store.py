@@ -58,26 +58,8 @@ class ChainModelMetadataStore(ModelMetadataStore):
 
         if not metadata:
             return None
-
-        commitment = metadata["info"]["fields"][0]
-        hex_data = commitment[list(commitment.keys())[0]][2:]
-
-        chain_str = bytes.fromhex(hex_data).decode()
-
-        model_id = None
-
-        try:
-            model_id = ModelId.from_compressed_str(chain_str)
-        except:
-            # If the metadata format is not correct on the chain then we return None.
-            bt.logging.trace(
-                f"Failed to parse the metadata on the chain for hotkey {hotkey}."
-            )
-            return None
-
-        model_metadata = ModelMetadata(id=model_id, block=metadata["block"])
-
-        return model_metadata
+        else:
+            return ModelMetadata.parse_chain_data(metadata)
 
 
 # Can only commit data every ~20 minutes.

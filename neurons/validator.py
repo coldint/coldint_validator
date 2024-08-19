@@ -37,10 +37,9 @@ import constants
 import dataset
 import validation
 from model import model_utils, competitions
-from model.data import ModelId
+from model.data import ModelId, ModelMetadata
 from model.model_tracker import ModelTracker
 from model.model_updater import ModelUpdater
-from model.storage.chain.chain_model_metadata_store import ChainModelMetadataStore
 from model.storage.disk.disk_model_store import DiskModelStore
 from model.storage.hugging_face.hugging_face_model_store import HuggingFaceModelStore
 from model.storage.disk import utils as disk_utils
@@ -131,6 +130,7 @@ class Validator:
         # === Bittensor objects ====
         self.wallet = bt.wallet(config=self.config)
         self.subtensor = bt.subtensor(config=self.config)
+        self.subtensor_lock = threading.RLock()
         self.dendrite = bt.dendrite(wallet=self.wallet)
         self.metagraph = self.subtensor.metagraph(self.config.netuid, lite=False)
         torch.backends.cudnn.benchmark = True
@@ -161,11 +161,6 @@ class Validator:
         # Setup a miner iterator to ensure we update all miners.
         self.miner_iterator = MinerIterator(self.metagraph.uids.tolist())
 
-        # Setup a ModelMetadataStore
-        self.metadata_store = ChainModelMetadataStore(
-            self.subtensor, self.wallet, self.config.netuid
-        )
-
         # Setup a RemoteModelStore
         self.remote_store = HuggingFaceModelStore()
 
@@ -175,7 +170,6 @@ class Validator:
         # Setup a model updater to download models as needed to match the latest provided miner metadata.
         bt.logging.trace("Starting ModelUpdater")
         self.model_updater = ModelUpdater(
-            metadata_store=self.metadata_store,
             remote_store=self.remote_store,
             local_store=self.local_store,
             model_tracker=self.model_tracker,
@@ -187,8 +181,9 @@ class Validator:
 
         # Initialize the update thread
         self.stop_event = threading.Event()
-        bt.logging.trace("Starting update_models thread")
-        self.update_thread = threading.Thread(target=self.update_models, daemon=True)
+        bt.logging.trace("Starting update thread")
+        self.update_thread_ts = time.time()
+        self.update_thread = threading.Thread(target=self.update_thread_func, daemon=True)
         self.update_thread.start()
 
         # Initialize the cleaner thread to remove outdated models
@@ -251,50 +246,76 @@ class Validator:
                     if uid in cinfo['uids_pending']:
                         cinfo['uids_pending'].remove(uid)
 
-    def check_top_models(self):
-        # At most once per `chain_update_cadence`, check which models are being assigned weight by
-        # the top validators and ensure they'll be evaluated soon.
-        now = dt.datetime.now()
-        if self.last_checked_top_models_time is not None and \
-                (now - self.last_checked_top_models_time) < constants.chain_update_cadence:
+
+    def update_chain(self):
+        now = time.time()
+        if self.last_chain_update is not None and \
+                (now - self.last_chain_update) < constants.CHAIN_UPDATE_INTERVAL:
+            return
+        self.last_chain_update = now
+
+        # We would like to run chain interaction commands with a timeout, but there is no
+        # straightforward method to do that using threads (as all options with a timeout
+        # leave the thread running). We do not want to use subprocesses either.
+        # Therefore, we run blocking in this thread. It would be nice if the bittensor library
+        # timeout properties would be configurable (there are some hard-coded retries etc).
+        # The main thread can monitor whether the thread performing these updates is still
+        # alive, and bail out if that is not the case.
+        try:
+            with self.subtensor_lock:
+                new_metagraph = self.subtensor.metagraph(self.config.netuid, lite=False)
+        except:
+            bt.logging.error(f"Failed to sync metagraph")
             return
 
-        self.last_checked_top_models_time = now
         with self.metagraph_lock:
-            metagraph = copy.deepcopy(self.metagraph)
+            self.metagraph = copy.deepcopy(new_metagraph)
+            self.model_tracker.on_hotkeys_updated(set(self.metagraph.hotkeys))
 
-        # Find any miner UIDs which top valis are assigning weight and aren't currently scheduled for an eval.
-        top_miner_uids = set(utils.list_top_miners(metagraph))
+        bt.logging.warning(f"Synced metagraph with {len(self.metagraph.neurons)} neurons")
+
+        # Determine top miners according to other valis
+        top_miner_uids = set(utils.list_top_miners(new_metagraph))
         bt.logging.info(f"Top miners: {top_miner_uids}")
-        uids_to_add = top_miner_uids - self.get_all_active_uids()
+        top_uids = top_miner_uids - self.get_all_active_uids()
 
-        for uid in uids_to_add:
-            # Limit how often we'll retry these top models.
-            time_diff = (
-                now - self.uid_last_retried_evaluation[uid]
-                if uid in self.uid_last_retried_evaluation
-                else constants.model_retry_cadence  # Default to being stale enough to check again.
-            )
-            if time_diff < constants.model_retry_cadence:
-                continue
+        # Determine for which top uids to force retry
+        now = time.time()
+        top_uids_to_eval = []
+        for uid in top_uids:
+            if now - self.uid_last_retried_ts.get(uid,0) > constants.MODEL_RETRY_INTERVAL:
+                top_uids_to_eval.append(uid)
+                self.uid_last_retried_ts[uid] = now
 
+        # Retrieve chain metadata, download new/forced models
+        start_uid = random.randint(0, len(new_metagraph.hotkeys))   # Pick random UID to start from
+        cur_uid = start_uid
+        while True:
+            self.update_thread_ts = time.time()
+            hotkey = new_metagraph.hotkeys[cur_uid]
+
+            # Sync the model, if necessary.
             try:
-                self.uid_last_retried_evaluation[uid] = now
-
-                # Redownload this model and schedule it for eval.
-                hotkey = metagraph.hotkeys[uid]
-                asyncio.run(
-                    self.model_updater.sync_model(hotkey, force=True)
+                # We lock subtensor to get metadata, so set_weights cannot occur
+                with self.subtensor_lock:
+                    metadata = bt.extrinsics.serving.get_metadata(self.subtensor, self.config.netuid, hotkey)
+                    if metadata is not None:
+                        metadata = ModelMetadata.parse_chain_data(metadata)
+                # model_updater updater the model_tracker with metadata
+                updated = asyncio.run(
+                    self.model_updater.sync_model(hotkey, metadata, force=cur_uid in top_uids_to_eval)
+                )
+                if updated:
+                    self.add_uid_to_competition(cur_uid, hotkey)
+                bt.logging.debug(f"Visited UID {cur_uid}, updated={updated}, commitment: {metadata.id.format_label() if metadata else '---'}")
+            except Exception as e:
+                bt.logging.error(
+                    f"Failed to sync model for UID {cur_uid}: {e} \n {traceback.format_exc()}"
                 )
 
-                self.add_uid_to_competition(uid, hotkey)
-                bt.logging.debug(
-                    f"Retrying evaluation for previously discarded model with incentive for UID={uid}."
-                )
-            except Exception:
-                bt.logging.debug(
-                    f"Failure in update loop for UID={uid} during top model check. {traceback.format_exc()}"
-                )
+            cur_uid = (cur_uid + 1) % len(new_metagraph.hotkeys)
+            if cur_uid == start_uid:
+                break
 
 
     def update_dynamic_config(self):
@@ -323,61 +344,32 @@ class Validator:
 
         self.save_state()
 
-    def update_models(self):
+    def update_thread_func(self):
         """
-        Updates the models in the local store based on the latest metadata from the chain.
-        Periodically fetch hall of fame / competition config json.
+        Updates all remote metadata: chain, competitions, hall of famae.
         """
 
-        # Track how recently we updated each uid from sequential iteration.
-        uid_last_checked_sequential = dict()
-        # Track how recently we checked the list of top models.
-        self.last_checked_top_models_time = None
-        # Track how recently we retried a model with incentive we've already dropped.
-        self.uid_last_retried_evaluation = dict()
-        # Track when we last fetched hall of fame
+        # Timestamp when we last retried models with incentive we've already dropped
+        self.uid_last_retried_ts = dict()
+        # Timestamp when we last fetched hall of fame
         self.last_cfg_fetch = None
+        # Timestamp when we last updated chain
+        self.last_chain_update = None
 
         while not self.stop_event.is_set():
             try:
                 self.update_dynamic_config()
-                self.check_top_models()
-
-                next_uid = next(self.miner_iterator)
-
-                # Confirm that we haven't already checked it in the chain update cadence.
-                time_diff = (
-                    dt.datetime.now() - uid_last_checked_sequential[next_uid]
-                    if next_uid in uid_last_checked_sequential
-                    else None
-                )
-                if time_diff and time_diff < constants.chain_update_cadence:
-                    # If we have seen it within chain update cadence then sleep until it has been at least that long.
-                    time_to_sleep = (
-                        constants.chain_update_cadence - time_diff
-                    ).total_seconds()
-                    bt.logging.trace(
-                        f"Update loop has already processed all UIDs in the last {constants.chain_update_cadence}. Sleeping {time_to_sleep} seconds."
-                    )
-                    time.sleep(time_to_sleep)
-
-                uid_last_checked_sequential[next_uid] = dt.datetime.now()
-
-                # Get their hotkey from the metagraph.
-                with self.metagraph_lock:
-                    hotkey = self.metagraph.hotkeys[next_uid]
-
-                # Sync the model, if necessary.
-                updated = asyncio.run(
-                    self.model_updater.sync_model(hotkey, force=False)
-                )
-                if updated:
-                    self.add_uid_to_competition(next_uid, hotkey)
-
             except Exception as e:
-                bt.logging.error(
-                    f"Error in update loop: {e} \n {traceback.format_exc()}"
-                )
+                bt.logging.error(f"Failed to update dynamic config: {e} \n {traceback.format_exc()}")
+
+            try:
+                self.update_chain()
+            except Exception as e:
+                bt.logging.error(f"Failed to update chain data: {e} \n {traceback.format_exc()}")
+
+            # Regular sleep, we are running in a separate thread
+            self.update_thread_ts = time.time()
+            time.sleep(60)
 
         bt.logging.info("Exiting update models loop.")
 
@@ -461,35 +453,14 @@ class Validator:
             console.print(table)
 
         try:
-            bt.logging.debug(f"Setting weights.")
-            await asyncio.wait_for(_try_set_weights(), ttl)
-            bt.logging.debug(f"Finished setting weights.")
+            bt.logging.warning(f"Setting weights.")
+            # Setting weights claims subtensor instance; will pause update_chain()
+            with self.subtensor_lock:
+                await asyncio.wait_for(_try_set_weights(), ttl)
+            bt.logging.warning(f"Finished setting weights.")
         except asyncio.TimeoutError:
             bt.logging.error(f"Failed to set weights after {ttl} seconds")
 
-    async def try_sync_metagraph(self, ttl: int):
-        """Syncs the metagraph with ttl in a background process, without raising exceptions if it times out."""
-
-        def sync_metagraph(endpoint):
-            metagraph = bt.subtensor(endpoint).metagraph(self.config.netuid, lite=False)
-            metagraph.save()
-
-        process = multiprocessing.Process(
-            target=sync_metagraph, args=(self.subtensor.chain_endpoint,)
-        )
-        process.start()
-        process.join(timeout=ttl)
-        if process.is_alive():
-            process.terminate()
-            process.join()
-            bt.logging.error(f"Failed to sync metagraph after {ttl} seconds")
-            return
-
-        bt.logging.info("Synced metagraph")
-        with self.metagraph_lock:
-            self.metagraph.load()
-            self.miner_iterator.set_miner_uids(self.metagraph.uids.tolist())
-            self.model_tracker.on_hotkeys_updated(set(self.metagraph.hotkeys))
 
     async def try_run_step(self, ttl: int):
         """Runs a step with ttl in a background process, without raising exceptions if it times out."""
@@ -926,7 +897,6 @@ class Validator:
                 ):
                     self.current_block = self.metagraph.block.item()
                     await self.try_run_step(ttl=60 * 20)
-                    await self.try_sync_metagraph(ttl=60)
                     self.save_state()
                     bt.logging.debug(
                         f"{self.metagraph.block.item() - self.last_epoch } / {self.config.blocks_per_epoch} blocks until next epoch."

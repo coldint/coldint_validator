@@ -1,4 +1,3 @@
-import datetime as dt
 from pathlib import Path
 
 # ---------------------------------
@@ -71,7 +70,5 @@ n_eval_pages = 8
 
 DEFAULT_POOL_SIZE = 6
 
-# time required between updates to the chain.
-chain_update_cadence = dt.timedelta(minutes=20)
-# time required between retrying evaluation of a stale model. (First retry will be immediate).
-model_retry_cadence = dt.timedelta(hours=4)
+CHAIN_UPDATE_INTERVAL   = 16*60
+MODEL_RETRY_INTERVAL    = 4*3600

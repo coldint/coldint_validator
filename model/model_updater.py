@@ -15,13 +15,11 @@ class ModelUpdater:
 
     def __init__(
         self,
-        metadata_store: ModelMetadataStore,
         remote_store: RemoteModelStore,
         local_store: LocalModelStore,
         model_tracker: ModelTracker,
         comps: dict,
     ):
-        self.metadata_store = metadata_store
         self.remote_store = remote_store
         self.local_store = local_store
         self.model_tracker = model_tracker
@@ -30,11 +28,7 @@ class ModelUpdater:
     def set_competitions(self, comp):
         self.competitions = comp
 
-    async def _get_metadata(self, hotkey: str) -> Optional[ModelMetadata]:
-        """Get metadata about a model by hotkey"""
-        return await self.metadata_store.retrieve_model_metadata(hotkey)
-
-    async def sync_model(self, hotkey: str, force: bool = False) -> bool:
+    async def sync_model(self, hotkey: str, metadata, force: bool = False) -> bool:
         """Updates local model for a hotkey if out of sync and returns if it was updated.
 
         Args:
@@ -45,9 +39,6 @@ class ModelUpdater:
         if self.competitions is None:
             bt.logging.debug("Competitions not known")
             return False
-
-        # Get the metadata for the miner.
-        metadata = await self._get_metadata(hotkey)
 
         if not metadata:
             bt.logging.trace(
