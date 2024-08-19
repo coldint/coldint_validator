@@ -736,7 +736,8 @@ class Validator:
             win_info['win_rate'][uid] if uid in win_info['win_rate'] else 0
                 for uid in uids_pool
         ])
-        model_weights = win_rate**constants.WEIGHT_SKEW_FACTOR
+        skew_factor = cinfo.get('weight_skew_factor',constants.WEIGHT_SKEW_FACTOR)
+        model_weights = win_rate**skew_factor
         weight_sum = np.sum(model_weights)
         if weight_sum:
             model_weights /= weight_sum
