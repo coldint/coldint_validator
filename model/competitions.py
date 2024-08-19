@@ -2,27 +2,43 @@ import json
 import requests
 from bittensor import logging
 
-required_keys = set(["reward", "dataset", "model_types", "model_size", "parameters"])
+required_keys = {"reward", "dataset", "model_types", "model_size", "parameters"}
 
 def validate_competitions(d):
     '''
-    Validate competitions dictinoary <d>, return <d> if valid, None otherwise
+    Validate competitions dictionary <d>.
+    Add defaults from key default.
+    Drop comments starting with "_".
+    return competitions dictionary if valid, None otherwise.
     '''
     if type(d) is not dict:
         logging.warning("Competitions not a dict")
         return None
 
+    defaults = d.get('default',{})
+
+    ret = {}
     for i, (cname, cinfo) in enumerate(d.items()):
+        if cname == 'default':
+            continue
+        if type(cname) is not str or len(cname)==0 or cname[0]=='_':
+            continue
+
         if type(cinfo) is not dict:
             logging.warning(f"Competition {cname} info not a dict")
             return None
 
-        missing_keys = required_keys - set(cinfo.keys())
+        add_c = defaults.copy()
+        add_c.update(cinfo)
+
+        missing_keys = required_keys - set(add_c.keys())
         if len(missing_keys) > 0:
             logging.warning(f"Competition {cname} missing keys {missing_keys}")
             return None
 
-    return d
+        ret[cname] = add_c
+
+    return ret
 
 def load_competitions(loc):
     '''
