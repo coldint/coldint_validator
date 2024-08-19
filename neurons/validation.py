@@ -128,7 +128,8 @@ def compute_losses(
     Returns:
         list: A list of losses for each batch.
     """
-    bt.logging.info(f"Evaluating {model}")
+    bt.logging.info(f"Evaluating model type {type(model).__name__}")
+    bt.logging.debug(f"Model: {model}")
 
     if allow_sliced and hasattr(model,'sliced'):
         model_bytes = model.num_parameters()*model.dtype.itemsize
