@@ -150,8 +150,11 @@ def list_top_miners(metagraph: bt.metagraph) -> List[int]:
 
     # For each, find the miner that has more than 50% of the weights.
     for uid in valis_by_stake:
-        # Weights is a list of (uid, weight) pairs
-        weights: List[Tuple[int, float]] = metagraph.neurons[uid].weights
+        if uid >= len(metagraph.weights):
+            bt.logging.warning(f"Vali UID {uid} not in metagraph.weights")
+            continue
+
+        weights = [(uid, w) for uid, w in enumerate(metagraph.weights[uid]) if w > 0]
         total_weight = sum(weight for _, weight in weights)
 
         # Only look for miners with at least half the weight from this vali
