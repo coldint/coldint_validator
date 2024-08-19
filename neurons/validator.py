@@ -58,6 +58,7 @@ from utilities.perf_monitor import PerfMonitor
 from utilities.mathutils import *
 
 TRANSFORMERS_VERSION_MIN     = "4.41.2"
+TRANSFORMERS_VERSION_OPTIMAL = "4.44.0"
 
 os.environ["TOKENIZERS_PARALLELISM"] = "true"
 
@@ -716,6 +717,8 @@ class Validator:
                 bt.logging.error(
                     f"Error in eval loop: {e}. Setting losses for uid: {uid} to infinity.\n{traceback.format_exc()}"
                 )
+                if transformers.__version__ != TRANSFORMERS_VERSION_OPTIMAL:
+                    bt.logging.error(f'Please run with transformers version {TRANSFORMERS_VERSION_OPTIMAL} (currently running {transformers.__version__}) before reporting issues.')
 
         win_info = validation.compute_wins(
                 losses_per_uid,
