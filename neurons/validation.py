@@ -26,6 +26,7 @@ import traceback
 import bittensor as bt
 import numpy as np
 import itertools
+from utilities.mathutils import *
 
 def compute_wins(
     losses_per_uid: typing.Dict[int, typing.List[float]],
@@ -93,7 +94,7 @@ def compute_wins(
     matrix = {uid_a:{uid_b:None for uid_b in uids_sorted} for uid_a in uids_sorted}
     for uid_a, uid_b in itertools.product(uids_sorted, uids_sorted):
         matrix[uid_a][uid_b] = {
-            'loss': np.mean(losses_per_uid[uid_a] - losses_per_uid[uid_b]),
+            'loss': naninf_meandelta(losses_per_uid[uid_a],losses_per_uid[uid_b]),
             'wins': int(np.sum(losses_per_uid[uid_a] < losses_per_uid[uid_b])),
             'wins_adv': int(np.sum(uid_advantage_factors[uid_a] * losses_per_uid[uid_a] < losses_per_uid[uid_b])),
         }
