@@ -41,9 +41,6 @@ class ModelUpdater:
             return False
 
         if not metadata:
-            bt.logging.trace(
-                f"No valid metadata found on the chain for hotkey {hotkey}"
-            )
             return False
 
         if metadata.id.competition not in self.competitions:
