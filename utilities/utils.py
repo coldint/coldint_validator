@@ -89,7 +89,7 @@ def _wrapped_func(func: functools.partial, log_queue: multiprocessing.Queue, que
         queue.put((e,stack_trace))
 
 
-def run_in_subprocess(func: functools.partial, ttl: int, mode="fork") -> Any:
+def run_in_subprocess(func: functools.partial, ttl: int, mode="fork", expected_errors={}) -> Any:
     """Runs the provided function on a subprocess with 'ttl' seconds to complete.
 
     Args:
@@ -147,7 +147,8 @@ def run_in_subprocess(func: functools.partial, ttl: int, mode="fork") -> Any:
 
     # If we put an exception on the queue then raise instead of returning.
     if isinstance(result[0], Exception):
-        bt.logging.error(f"Exception in subprocess:\n{result[1]}")
+        if type(result[0]).__name__ not in expected_errors:
+            bt.logging.error(f"Exception in subprocess:\n{result[1]}")
         raise result[0]
     if isinstance(result[0], BaseException):
         bt.logging.error(f"BaseException in subprocess:\n{result[1]}")
