@@ -1,14 +1,16 @@
 import bittensor as bt
 from typing import Optional
 import constants
+import os
 from model import competitions
 from model.model_utils import get_hash_of_two_strings
 from model.data import ModelMetadata
 from model.model_tracker import ModelTracker
+from model.storage.disk import utils
 from model.storage.local_model_store import LocalModelStore
 from model.storage.model_metadata_store import ModelMetadataStore
 from model.storage.remote_model_store import RemoteModelStore
-
+from transformers import AutoModelForCausalLM
 
 class ModelUpdater:
     """Checks if the currently tracked model for a hotkey matches what the miner committed to the chain."""
@@ -61,32 +63,47 @@ class ModelUpdater:
             return False
 
         # Get the local path based on the local store to download to (top level hotkey path)
-        path = self.local_store.get_path(hotkey)
+        model_available = False
+        snapshot_path = utils.get_local_model_snapshot_dir(self.local_store.base_dir, hotkey, metadata.id)
+        if os.path.exists(snapshot_path):
+            current_hash = utils.get_hash_of_directory(snapshot_path)
+            hash_with_hotkey = get_hash_of_two_strings(current_hash, hotkey)
+            if hash_with_hotkey == metadata.id.hash:
+                model_available = True
 
         # Otherwise we need to download the new model based on the metadata.
-        try:
-            bt.logging.debug(f"download_model({metadata.id}) to {path}")
-            model_size_limit = cparams.get('model_size', constants.MAX_MODEL_SIZE)
-            model = await self.remote_store.download_model(
-                metadata.id, path, model_size_limit
+        if model_available:
+            bt.logging.debug(f"Model {metadata.id} already available, not downloading")
+            pt_model = AutoModelForCausalLM.from_pretrained(
+                pretrained_model_name_or_path=snapshot_path,
+                use_safetensors=True,
             )
-        except Exception as e:
-            bt.logging.trace(
-                f"Failed to download model for hotkey {hotkey} due to {e}."
-            )
-            return False
+        else:
+            path = self.local_store.get_path(hotkey)
+            try:
+                bt.logging.debug(f"download_model({metadata.id}) to {path}")
+                model_size_limit = cparams.get('model_size', constants.MAX_MODEL_SIZE)
+                model = await self.remote_store.download_model(
+                    metadata.id, path, model_size_limit
+                )
+            except Exception as e:
+                bt.logging.trace(
+                    f"Failed to download model for hotkey {hotkey} due to {e}."
+                )
+                return False
 
-        # Check that the hash of the downloaded content matches.
-        hash_with_hotkey = get_hash_of_two_strings(model.id.hash, hotkey)
-        if hash_with_hotkey != metadata.id.hash:
-            bt.logging.trace(
-                f"Sync for hotkey {hotkey} failed. Hash of content downloaded from hugging face {model.id.hash} "
-                + f"or the hash including the hotkey {hash_with_hotkey} do not match chain metadata {metadata}."
-            )
-            return False
+            # Check that the hash of the downloaded content matches.
+            hash_with_hotkey = get_hash_of_two_strings(model.id.hash, hotkey)
+            if hash_with_hotkey != metadata.id.hash:
+                bt.logging.trace(
+                    f"Sync for hotkey {hotkey} failed. Hash of content downloaded from hugging face {model.id.hash} "
+                    + f"or the hash including the hotkey {hash_with_hotkey} do not match chain metadata {metadata}."
+                )
+                return False
+            pt_model = model.pt_model
 
         # Check that the model parameters are allowed in the proposed competition
-        mdl_allowed, reason = competitions.validate_model_constraints(model.pt_model, cparams)
+        mdl_allowed, reason = competitions.validate_model_constraints(pt_model, cparams)
         if not mdl_allowed:
             bt.logging.trace(
                 f"Sync for hotkey {hotkey} failed: model not allowed in competition {cname}: {reason}"
