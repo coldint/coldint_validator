@@ -8,6 +8,12 @@ from typing import Any, List, Optional, Tuple
 import bittensor as bt
 import constants
 
+# Needed to get proper logging between child and parent process
+from bittensor.btlogging.defines import BITTENSOR_LOGGER_NAME
+import logging as stdlogging
+from logging.handlers import QueueHandler,QueueListener
+import atexit
+
 from model.data import ModelId, ModelMetadata
 
 
@@ -58,9 +64,23 @@ def get_hf_url(model_metadata: ModelMetadata) -> str:
     return f"https://huggingface.co/{model_metadata.id.namespace}/{model_metadata.id.name}/tree/{model_metadata.id.commit}"
 
 
-def _wrapped_func(func: functools.partial, queue: multiprocessing.Queue):
+def _wrapped_func(func: functools.partial, log_queue: multiprocessing.Queue, queue: multiprocessing.Queue):
     resource.setrlimit(resource.RLIMIT_NOFILE, (65000, 65000))
     try:
+        if log_queue is not None:
+            # This feature is not (yet) available on bittensor
+            #bt.logging.set_queue(log_queue)
+            # Hack in a queue handler, avoid private variables
+            try:
+                logger = stdlogging.getLogger(BITTENSOR_LOGGER_NAME)
+                while len(logger.handlers):
+                    logger.removeHandler(logger.handlers[0])
+                queue_handler = QueueHandler(log_queue)
+                logger.addHandler(queue_handler)
+                queue_handler.setLevel(stdlogging.INFO)
+                logger.setLevel(stdlogging.INFO)
+            except Exception as e:
+                print(f'Non-fatal: exception trying to implement proper logging: {e}')
         result = func()
         queue.put((result,))
     except (Exception, BaseException) as e:
@@ -81,11 +101,35 @@ def run_in_subprocess(func: functools.partial, ttl: int, mode="fork") -> Any:
     """
     ctx = multiprocessing.get_context(mode)
     queue = ctx.Queue()
-    process = ctx.Process(target=_wrapped_func, args=[func, queue])
+    # When forking, the log queue survives, but when spawning a process, logging
+    # is re-initialized and the queue has to be set manually.
+    log_queue = None
+    listener = None
+    if mode == 'spawn':
+        # This can only work if bittensor would use mp.Manager().Queue() to
+        # create the right kind of queue.
+        #log_queue = bt.logging.get_queue()
+        # Roll our own, re-log to existing handlers, avoid bt.logging private variables.
+        try:
+            logger = stdlogging.getLogger(BITTENSOR_LOGGER_NAME)
+            log_queue = multiprocessing.Manager().Queue()
+            listener = QueueListener(log_queue, *logger.handlers, respect_handler_level=True)
+            listener.start()
+            atexit.register(listener.stop)
+        except Exception as e:
+            bt.logging.warning(f'Non-fatal: failed to implement proper logging for child process: {e}')
+    process = ctx.Process(target=_wrapped_func, args=[func, log_queue, queue])
 
     process.start()
 
     process.join(timeout=ttl)
+
+    if listener is not None:
+        try:
+            listener.stop()
+            atexit.unregister(listener.stop)
+        except:
+            pass
 
     if process.is_alive():
         process.terminate()
