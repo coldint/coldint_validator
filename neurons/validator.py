@@ -100,6 +100,7 @@ class Validator:
             except Exception as e:
                 bt.logging.info(f"Invalid state file: {e}")
 
+        self.models_reset_ts = 0
         with self.state_lock:
             if 'version' in state and state['version'] == constants.__spec_version__:
                 self.hall_of_fame = state.pop("hall_of_fame", {})
@@ -107,6 +108,7 @@ class Validator:
                 tracker_state = state.pop("tracker", {})
                 self.cstate = state.pop('cstate', {})
                 bt.logging.info("State loaded successfully")
+                self.models_reset_ts = state.pop("models_reset_ts", 0)
             else:
                 bt.logging.info("State version incompatible, starting with clean state")
                 tracker_state = {}
@@ -123,6 +125,7 @@ class Validator:
                 'hall_of_fame': self.hall_of_fame,
                 'tracker': self.model_tracker.get_state(),
                 'cstate': self.cstate,
+                'models_reset_ts': self.models_reset_ts,
             }
         try:
             with open(os.path.join(self.state_path(), Validator.STATE_FILENAME), 'wb') as f:
@@ -297,9 +300,17 @@ class Validator:
         now = time.time()
         top_uids_to_eval = []
         for uid in top_uids:
-            if now - self.uid_last_retried_ts.get(uid,0) > constants.MODEL_RETRY_INTERVAL:
+            if now - self.uid_last_retried_ts.get(uid,0) > constants.TOP_MODEL_RETRY_INTERVAL:
                 top_uids_to_eval.append(uid)
                 self.uid_last_retried_ts[uid] = now
+
+        # After a certain time, force re-evaluation of all models to make sure they can win
+        # on changing competition parameters or advantage factors
+        force_eval = False
+        if now - self.models_reset_ts > constants.GEN_MODEL_RETRY_INTERVAL:
+            bt.logging.info(f"Forcing re-evaluation of all models")
+            self.models_reset_ts = now
+            force_eval = True
 
         # Retrieve chain metadata, download new/forced models
         start_uid = random.randint(0, len(new_metagraph.hotkeys))   # Pick random UID to start from
@@ -316,8 +327,9 @@ class Validator:
                     if metadata is not None:
                         metadata = ModelMetadata.parse_chain_data(metadata)
                 # model_updater updater the model_tracker with metadata
+                force = force_eval or cur_uid in top_uids_to_eval
                 updated = asyncio.run(
-                    self.model_updater.sync_model(hotkey, metadata, force=cur_uid in top_uids_to_eval)
+                    self.model_updater.sync_model(hotkey, metadata, force=force)
                 )
                 if updated:
                     self.add_uid_to_competition(cur_uid, hotkey)
