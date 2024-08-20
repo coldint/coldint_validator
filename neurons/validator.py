@@ -70,6 +70,12 @@ class Container:
     '''Empty container object'''
     pass
 
+class ModelIssue(Exception):
+    '''
+    Exception class to signal issues with models preventing evaluation.
+    '''
+    pass
+
 class Validator:
     STATE_FILENAME = "validator_state.json"
     BENCHMARK_FILENAME = "benchmark.json"
@@ -634,7 +640,7 @@ class Validator:
         batches = None
         batches_max_token_id = None
         if 'tokenizer' in cinfo:
-            # Competition-wide tokenizer --> fixed sequence length
+            # Competition-wide (forced or default) tokenizer --> fixed sequence length
             batches = dataloader.tokenize(
                     cinfo['tokenizer'],
                     max_len=cinfo.get('max_sequence_len', constants.MAX_SEQUENCE_LEN),
@@ -648,6 +654,7 @@ class Validator:
         # Compute model losses on batches.
         losses_per_uid = {uid: None for uid in uids_pool}
         losses_pt_per_uid = {uid: None for uid in uids_pool}
+        avg_sample_len_per_uid = {uid: None for uid in uids_pool}
         uid_to_label = {uid: '' for uid in uids_pool}
         uid_to_block = {uid: 1<<31 for uid in uids_pool}
         n_evaluated = 0
@@ -664,75 +671,71 @@ class Validator:
                 uid_to_block[uid] = metadata.block if metadata.block is not None else 1<<31
                 uid_to_label[uid] = metadata.id.format_label()
                 bt.logging.debug(f"Evaluating uid {uid} ({uid_to_label[uid]}) from block {uid_to_block[uid]}")
-
-                model_i = self.local_store.retrieve_model(metadata.hotkey, metadata.id, path=metadata.path)
-                mdl_allowed, reason = competitions.validate_model_constraints(model_i.pt_model, cinfo)
-                if not mdl_allowed:
-                    bt.logging.info(f"Model for uid {uid} violates competition {cname} constraints: {reason}")
-                    del model_i
-                    continue
-                allow_sliced = False
-                model_type = type(model_i.pt_model).__name__
-                if 'Sliced' in model_type:
-                    # Test the exact model type name to check whether slicing is allowed by config:
-                    allow_sliced = model_type in cinfo['model_types']
-
                 # Get model tokenizer if no competition-wide tokenizer is set
                 mdl_batches = batches
                 max_token_id = batches_max_token_id
-                if mdl_batches is None:
+                model_path = disk_utils.get_local_model_snapshot_dir(
+                        self.local_store.base_dir,
+                        metadata.hotkey,
+                        metadata.id) if metadata.path is None else metadata.path
+                tokenizer_json = os.path.join(model_path,'tokenizer.json')
+                if not os.path.exists(tokenizer_json):
+                    # Assume tokenizer.json indicates an embedded tokenizer is available.
+                    if mdl_batches is None:
+                        raise ModelIssue(f'No default tokenizer and no model tokenizer available')
+                elif mdl_batches is None or cinfo.get('free_tokenizer',False):
                     max_len = cinfo.get('max_sequence_len', None)
                     if max_len is None:
-                        max_len = model_utils.get_model_max_sequence_len(model_i.pt_model)
-                    if max_len is None:
-                        bt.logging.info(f"Unable to determine max sequence length for model for uid {uid}")
-                        del model_i
-                        continue
-                    model_path = disk_utils.get_local_model_snapshot_dir(
-                            self.local_store.base_dir,
-                            metadata.hotkey,
-                            metadata.id) if metadata.path is None else metadata.path
-                    mdl_batches = dataloader.tokenize(
-                            model_path,
-                            max_len=max_len,
-                            max_invalid=cinfo.get('max_tokenize_fails', constants.MAX_TOKENIZE_FAILS)
-                    )
-                    max_token_id = max(
-                        [max(b[0]) for b in mdl_batches if b is not None]
-                    )
+                        raise ModelIssue(f"Unable to determine max sequence length")
+                    try:
+                        new_mdl_batches = None
+                        new_mdl_batches = dataloader.tokenize(
+                                model_path,
+                                max_len=max_len,
+                                max_invalid=cinfo.get('max_tokenize_fails', constants.MAX_TOKENIZE_FAILS)
+                        )
+                        mdl_batches = new_mdl_batches
+                        max_token_id = max(
+                            [max(b[0]) for b in mdl_batches if b is not None]
+                        )
+                        bt.logging.info("Using model-supplied tokenizer")
+                    except Exception as e:
+                        if new_mdl_batches is None:
+                            if mdl_batches is None:
+                                raise ModelIssue(f'No default tokenizer and no model tokenizer available: {e}')
+                            bt.logging.info(f"Using default tokenizer {cinfo.get('tokenizer', 'unknown')}, because {e}")
 
-                embed_size = None
-                try:
-                    embed_size = model_i.pt_model.model.embed_tokens.weight.shape[0]
-                except Exception as e:
-                    # Currently supported models should have the queried parameter, but in case they don't, just skip this check.
-                    bt.logging.warning(f'could not find embed size, skipping check: {e}')
+                if mdl_batches is None:
+                    # We should never arrive here
+                    raise Exception("No tokenizer available (no default and not supplied in model)")
 
-                if embed_size and max_token_id>=embed_size:
-                    bt.logging.error(f"Vocabulary size mismatch between tokenizer and model: {max_token_id} >= {embed_size}, disqualifying model")
-                    del model_i
-                    continue
 
-                losses = utils.run_in_subprocess(
+                losses,losses_pt,avg_sample_len = utils.run_in_subprocess(
                     functools.partial(
-                        validation.compute_losses,
-                        model_i.pt_model,
-                        allow_sliced,
-                        mdl_batches,
-                        self.config.device
+                        check_and_compute_losses,
+                        local_store=self.local_store,
+                        metadata=metadata,
+                        competition_info=cinfo,
+                        batches=mdl_batches,
+                        max_token_id=max_token_id,
+                        device=self.config.device,
                     ),
                     ttl=360,
                     mode="spawn",
+                    expected_errors={"ModelIssue"},
                 )
-                losses_pt = [loss_sum / len(batch[0]) if batch is not None else math.inf for loss_sum, batch in zip(losses, mdl_batches)]
-                n_evaluated += 1
 
-                del model_i
+                n_evaluated += 1
 
                 losses_per_uid[uid] = losses
                 losses_pt_per_uid[uid] = losses_pt
-                bt.logging.debug(f"Losses for uid:{uid}, per token: {naninf_mean(losses_pt):.03f} +- {naninf_std(losses_pt):.03f}, sum {naninf_mean(losses):.01f} +- {naninf_std(losses):.01f}")
+                avg_sample_len_per_uid[uid] = avg_sample_len
+                bt.logging.debug(f"Losses for uid:{uid}, per token: {naninf_mean(losses_pt):.03f} +- {naninf_std(losses_pt):.03f}, sum {naninf_mean(losses):.01f} +- {naninf_std(losses):.01f}, avg sample len: {avg_sample_len:.01f}")
 
+            except ModelIssue as e:
+                bt.logging.info(
+                    f'Model issue for uid {uid}, disqualifying: {e}'
+                )
             except Exception as e:
                 bt.logging.error(
                     f"Error in eval loop: {e}. Setting losses for uid: {uid} to infinity.\n{traceback.format_exc()}"
@@ -789,6 +792,8 @@ class Validator:
                 "block": uid_to_block.get(uid, 1<<31),
                 "losses": losses_per_uid[uid],
                 "n_samples": naninf_count(losses_per_uid[uid]),
+                "n_inf": np.sum(np.isinf(losses_per_uid[uid])),
+                "avg_sample_len": avg_sample_len_per_uid[uid],
                 "loss_pt_avg": naninf_mean(losses_pt_per_uid[uid]),
                 "loss_pt_std": naninf_std(losses_pt_per_uid[uid]),
                 "loss_sum_avg": naninf_mean(losses_per_uid[uid]),
@@ -886,6 +891,7 @@ class Validator:
         table.add_column("compt", style="magenta")
         table.add_column("avg_pt_loss", style="magenta")
         table.add_column("avg_sum_loss", style="magenta")
+        table.add_column("avg_slen", style="magenta")
         table.add_column("adv_factor(%)", style="magenta")
         table.add_column("win_rate", style="magenta")
         table.add_column("win_total", style="magenta")
@@ -898,6 +904,7 @@ class Validator:
                     str(d['competition']),
                     f"{d['loss_pt_avg']:.04f}+-{d['loss_pt_std']:.04f}",
                     f"{d['loss_sum_avg']:.01f}+-{d['loss_sum_std']:.01f}",
+                    f"{d['avg_sample_len']:.01f}",
                     f"{d['adv_factor']:.03f} of {100*constants.advantage_initial:.03f}",
                     str(round(d["win_rate"], 4)),
                     str(d["win_total"]),
@@ -985,6 +992,42 @@ class Validator:
                 bt.logging.error(
                     f"Error in validator loop \n {e} \n {traceback.format_exc()}"
                 )
+
+def check_and_compute_losses(
+        local_store=None,
+        metadata=None,
+        competition_info=None,
+        batches=None,
+        max_token_id=None,
+        device=None,
+    ):
+    cinfo = competition_info
+    model_i = local_store.retrieve_model(metadata.hotkey, metadata.id, path=metadata.path)
+    mdl_allowed, reason = competitions.validate_model_constraints(model_i.pt_model, cinfo)
+    if not mdl_allowed:
+        raise ModelIssue(f"Model violates competition {cname} constraints: {reason}")
+    allow_sliced = False
+    model_type = type(model_i.pt_model).__name__
+    if 'Sliced' in model_type:
+        # Test the exact model type name to check whether slicing is allowed by config:
+        allow_sliced = model_type in cinfo['model_types']
+
+    embed_size = None
+    try:
+        embed_size = model_i.pt_model.model.embed_tokens.weight.shape[0]
+    except Exception as e:
+        # Currently supported models should have the queried parameter, but in case they don't, just skip this check.
+        bt.logging.warning(f'could not find embed size, skipping check: {e}')
+
+    if embed_size and max_token_id>=embed_size:
+        raise ModelIssue(f"Vocabulary size mismatch between tokenizer and model: {max_token_id} >= {embed_size}")
+
+    losses = validation.compute_losses(model_i.pt_model,allow_sliced,batches,device)
+    losses_pt = [loss_sum / len(batch[0]) if batch is not None else math.inf for loss_sum, batch in zip(losses, batches)]
+    sample_lengths = [len(batch[0]) for batch in batches if batch is not None]
+    avg_sample_length = 0 if len(sample_lengths) == 0 else np.mean(sample_lengths)
+
+    return losses,losses_pt,avg_sample_length
 
 
 if __name__ == "__main__":
