@@ -1,6 +1,6 @@
 import json
 import requests
-from bittensor import logging
+import bittensor as bt
 
 required_keys = {"reward", "dataset", "model_types", "model_size", "parameters"}
 
@@ -12,7 +12,7 @@ def validate_competitions(d):
     return competitions dictionary if valid, None otherwise.
     '''
     if type(d) is not dict:
-        logging.warning("Competitions not a dict")
+        bt.logging.warning("Competitions not a dict")
         return None
 
     defaults = d.get('default',{})
@@ -25,7 +25,7 @@ def validate_competitions(d):
             continue
 
         if type(cinfo) is not dict:
-            logging.warning(f"Competition {cname} info not a dict")
+            bt.logging.warning(f"Competition {cname} info not a dict")
             return None
 
         add_c = defaults.copy()
@@ -33,7 +33,7 @@ def validate_competitions(d):
 
         missing_keys = required_keys - set(add_c.keys())
         if len(missing_keys) > 0:
-            logging.warning(f"Competition {cname} missing keys {missing_keys}")
+            bt.logging.warning(f"Competition {cname} missing keys {missing_keys}")
             return None
 
         ret[cname] = add_c
@@ -53,10 +53,10 @@ def load_competitions(loc):
         else:
             with open(loc) as f:
                 d = json.load(f)
-        logging.info(f"Fetched competitions content, containing {len(d)} entries")
+        bt.logging.info(f"Fetched competitions content, containing {len(d)} entries")
 
     except Exception as e:
-        logging.warning(f"Failed to load competitions: {e}")
+        bt.logging.warning(f"Failed to load competitions: {e}")
         return None
 
     return validate_competitions(d)
@@ -96,7 +96,8 @@ def model_get_valid_competitions(mdl, competitions):
     return ret
 
 if __name__ == "__main__":
-    logging.set_debug(True)
+    bt.logging.on()
+    bt.logging.set_debug(True)
     c = load_competitions("../../sn29/competitions.json")
 
     import os
@@ -106,7 +107,7 @@ if __name__ == "__main__":
 
     import torch
     import transformers
-    logging.info(f"Loading model from {sys.argv[1]}")
+    bt.logging.info(f"Loading model from {sys.argv[1]}")
     mdl = transformers.AutoModelForCausalLM.from_pretrained(
             sys.argv[1],
             torch_dtype=torch.bfloat16,
@@ -116,7 +117,7 @@ if __name__ == "__main__":
     dirsize = model_size(sys.argv[1])
     n_params = model_n_parameters(mdl)
     valid_cs = model_get_valid_competitions(mdl, c)
-    logging.info(f"Loaded model: {mdl}")
-    logging.info(f"Dirsize: {dirsize}")
-    logging.info(f"Parameters: {n_params}")
-    logging.info(f"Valid competitions: {valid_cs}")
+    bt.logging.info(f"Loaded model: {mdl}")
+    bt.logging.info(f"Dirsize: {dirsize}")
+    bt.logging.info(f"Parameters: {n_params}")
+    bt.logging.info(f"Valid competitions: {valid_cs}")
