@@ -50,10 +50,10 @@ def load_competitions(loc):
             req = requests.get(loc)
             req.raise_for_status()
             d = req.json()
-            logging.info(f"Fetched competitions content, containing {len(d)} entries")
         else:
             with open(loc) as f:
                 d = json.load(f)
+        logging.info(f"Fetched competitions content, containing {len(d)} entries")
 
     except Exception as e:
         logging.warning(f"Failed to load competitions: {e}")
