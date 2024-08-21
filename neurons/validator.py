@@ -358,7 +358,7 @@ class Validator:
             # Check if a dedicated competitions-{uid}.json is available.
             # This is used to allow targeted tweaks e.g. in case of issues with transformer overrides.
             vali_url = url.replace('.json',f'-{self.uid}.json')
-            comps = competitions.load_competitions(vali_url)
+            comps = competitions.load_competitions(vali_url,warn_failure=False)
         if comps is None:
             # Load regular competition info.
             comps = competitions.load_competitions(url)

@@ -40,7 +40,7 @@ def validate_competitions(d):
 
     return ret
 
-def load_competitions(loc):
+def load_competitions(loc,warn_failure=True):
     '''
     Load competitions from location <loc> (local or URL starting with 'https://'
     Return competitions dictionary, or None on failure
@@ -56,7 +56,8 @@ def load_competitions(loc):
         bt.logging.info(f"Fetched competitions content, containing {len(d)} entries")
 
     except Exception as e:
-        bt.logging.warning(f"Failed to load competitions: {e}")
+        if warn_failure:
+            bt.logging.warning(f"Failed to load competitions: {e}")
         return None
 
     return validate_competitions(d)
