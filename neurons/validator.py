@@ -264,6 +264,31 @@ class Validator:
                         cinfo['uids_pending'].remove(uid)
 
 
+    def reconnect_subtensor(self, n_retries=3):
+        for i in range(n_retries):
+            try:
+                with self.subtensor_lock:
+                    self.subtensor = bt.subtensor(config=self.config)
+                    bt.logging.info(f"Subtensor successfully reconnected")
+                    return True
+            except Exception as e:
+                bt.logging.warning(f"Failed to reconnect subtensor {i+1}/{n_retries}: {e}\n{traceback.format_exc()}")
+        bt.logging.error(f"Failed to reconnect subtensor {n_retries} times, giving up")
+        return False
+
+    def get_metagraph(self, n_retries=3):
+        for i in range(n_retries):
+            try:
+                metagraph = self.subtensor.metagraph(self.config.netuid, lite=False)
+                if metagraph is not None:
+                    return metagraph
+            except Exception as e:
+                bt.logging.warning(f"Failed to get metagraph {i+1}/{n_retries}: {e}\n{traceback.format_exc()}")
+            bt.logging.info("Reconnecting subtensor")
+            self.reconnect_subtensor()
+        bt.logging.error(f"Failed to get metagraph {n_retries} times, giving up")
+        return None
+
     def update_chain(self):
         now = time.time()
         if self.last_chain_update is not None and \
@@ -278,12 +303,9 @@ class Validator:
         # timeout properties would be configurable (there are some hard-coded retries etc).
         # The main thread can monitor whether the thread performing these updates is still
         # alive, and bail out if that is not the case.
-        try:
-            with self.subtensor_lock:
-                new_metagraph = self.subtensor.metagraph(self.config.netuid, lite=False)
-        except:
-            bt.logging.error(f"Failed to sync metagraph")
-            return
+        new_metagraph = self.get_metagraph()
+        if new_metagraph is None:
+            return False
 
         with self.metagraph_lock:
             self.metagraph = copy.deepcopy(new_metagraph)
