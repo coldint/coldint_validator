@@ -173,6 +173,7 @@ class SubsetFineWebEdu2Loader(IterableDataset):
             tokenizer = AutoTokenizer.from_pretrained(tokenizer)
         batches = []
         n_invalid = 0
+        n_too_long = 0
         for irow, row in enumerate(self.buffer):
             ids = tokenizer(row, truncation=False)["input_ids"]
             repro = tokenizer.decode(ids)
@@ -186,12 +187,16 @@ class SubsetFineWebEdu2Loader(IterableDataset):
             if ids is not None:
                 ids += [tokenizer.eos_token_id]
                 if max_len and len(ids) > max_len:
-                    bt.logging.warning(f"Sample {irow} too long for model ({len(ids)} > {max_len}), forcing +Inf score")
+                    bt.logging.debug(f"Sample {irow} too long for model ({len(ids)} > {max_len}), forcing +Inf score")
+                    n_too_long += 1
                     ids = None
                 else:
                     ids = torch.tensor([ids])
 
             batches.append(ids)
+
+        if n_too_long:
+            bt.logging.info(f"{n_too_long} samples too long (> {max_len}), forced +Inf scores")
 
         return batches
 
