@@ -57,7 +57,7 @@ from rich.console import Console
 
 import bittensor as bt
 from utilities.miner_iterator import MinerIterator
-from utilities import utils
+from utilities import utils, btlite
 from utilities.perf_monitor import PerfMonitor
 from utilities.mathutils import *
 
@@ -145,7 +145,7 @@ class Validator:
 
         # === Bittensor objects ====
         self.wallet = bt.wallet(config=self.config)
-        self.subtensor = bt.subtensor(config=self.config)
+        self.subtensor = btlite.get_subtensor(config=self.config)
         self.subtensor_lock = threading.RLock()
         self.dendrite = bt.dendrite(wallet=self.wallet)
         self.metagraph = self.subtensor.metagraph(self.config.netuid, lite=False)
@@ -263,19 +263,6 @@ class Validator:
                     if uid in cinfo['uids_pending']:
                         cinfo['uids_pending'].remove(uid)
 
-
-    def reconnect_subtensor(self, n_retries=3):
-        for i in range(n_retries):
-            try:
-                with self.subtensor_lock:
-                    self.subtensor = bt.subtensor(config=self.config)
-                    bt.logging.info(f"Subtensor successfully reconnected")
-                    return True
-            except Exception as e:
-                bt.logging.warning(f"Failed to reconnect subtensor {i+1}/{n_retries}: {e}\n{traceback.format_exc()}")
-        bt.logging.error(f"Failed to reconnect subtensor {n_retries} times, giving up")
-        return False
-
     def get_metagraph(self, n_retries=3):
         for i in range(n_retries):
             try:
@@ -285,7 +272,10 @@ class Validator:
             except Exception as e:
                 bt.logging.warning(f"Failed to get metagraph {i+1}/{n_retries}: {e}\n{traceback.format_exc()}")
             bt.logging.info("Reconnecting subtensor")
-            self.reconnect_subtensor()
+            st = btlite.get_subtensor(config=self.config)
+            with self.subtensor_lock:
+                self.subtensor = st
+
         bt.logging.error(f"Failed to get metagraph {n_retries} times, giving up")
         return None
 
@@ -343,7 +333,6 @@ class Validator:
 
             # Sync the model, if necessary.
             try:
-                # We lock subtensor to get metadata, so set_weights cannot occur
                 with self.subtensor_lock:
                     metadata = bt.extrinsics.serving.get_metadata(self.subtensor, self.config.netuid, hotkey)
                     if metadata is not None:
@@ -484,39 +473,42 @@ class Validator:
     async def try_set_weights(self, ttl: int):
         """Sets the weights on the chain with ttl, without raising exceptions if it times out."""
 
-        async def _try_set_weights():
-            try:
-                self.weights.nan_to_num(0.0)
-                self.subtensor.set_weights(
-                    netuid=self.config.netuid,
-                    wallet=self.wallet,
-                    uids=self.metagraph.uids,
-                    weights=self.weights[:len(self.metagraph.uids)],
-                    wait_for_inclusion=False,
-                    version_key=constants.weights_version_key,
-                )
-            except:
-                bt.logging.warning("Failed to set weights. Trying again later.")
+        # Prepare and log weights
+        self.weights.nan_to_num(0.0)
+        ws, ui = self.weights.topk(len(self.weights))
+        table = Table(title="All non-zero weights")
+        table.add_column("uid", justify="right", style="cyan", no_wrap=True)
+        table.add_column("weight", style="magenta")
+        for index, weight in list(zip(ui.tolist(), ws.tolist())):
+            if weight == 0:
+                continue
+            table.add_row(str(index), str(round(weight, 4)))
+        console = Console()
+        console.print(table)
 
-            ws, ui = self.weights.topk(len(self.weights))
-            table = Table(title="All non-zero weights")
-            table.add_column("uid", justify="right", style="cyan", no_wrap=True)
-            table.add_column("weight", style="magenta")
-            for index, weight in list(zip(ui.tolist(), ws.tolist())):
-                if weight == 0:
-                    continue
-                table.add_row(str(index), str(round(weight, 4)))
-            console = Console()
-            console.print(table)
+        # always get a new subtensor instance for weight setting
+        st = btlite.get_subtensor()
+        if st is None:
+            bt.logging.error(f'Could not create subtensor, cannot set weights')
+            return
 
         try:
             bt.logging.warning(f"Setting weights.")
-            # Setting weights claims subtensor instance; will pause update_chain()
-            with self.subtensor_lock:
-                await asyncio.wait_for(_try_set_weights(), ttl)
+            call = btlite.set_weights_retry(
+                subtensor=st,
+                hotkey=self.wallet.hotkey,
+                uids=self.metagraph.uids,
+                netuid=constants.SUBNET_UID,
+                weights=self.weights[:len(self.metagraph.uids)],
+                wait_for_inclusion=True,
+                version_key=constants.weights_version_key,
+            )
+            await asyncio.wait_for(call, ttl)
             bt.logging.warning(f"Finished setting weights.")
         except asyncio.TimeoutError:
             bt.logging.error(f"Failed to set weights after {ttl} seconds")
+        except Exception as e:
+            bt.logging.warning(f"Failed to set weights: {e}, {traceback.format_exc()}")
 
 
     async def try_run_step(self, ttl: int):
