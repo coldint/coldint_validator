@@ -100,7 +100,7 @@ class Validator:
             except Exception as e:
                 bt.logging.info(f"Invalid state file: {e}")
 
-        self.models_reset_ts = 0
+        self.force_eval_until_uid_last = None
         self.last_weights_set = time.time()
         with self.state_lock:
             if 'version' in state and state['version'] == constants.__spec_version__:
@@ -109,7 +109,7 @@ class Validator:
                 tracker_state = state.pop("tracker", {})
                 self.cstate = state.pop('cstate', {})
                 bt.logging.info("State loaded successfully")
-                self.models_reset_ts = state.pop("models_reset_ts", 0)
+                self.force_eval_until_uid_last = state.pop("force_eval_until_uid_last", None)
                 self.last_weights_set = state.pop("last_weights_set", time.time())
             else:
                 bt.logging.info("State version incompatible, starting with clean state")
@@ -127,7 +127,7 @@ class Validator:
                 'hall_of_fame': self.hall_of_fame,
                 'tracker': self.model_tracker.get_state(),
                 'cstate': self.cstate,
-                'models_reset_ts': self.models_reset_ts,
+                'force_eval_until_uid_last': self.force_eval_until_uid_last,
                 'last_weights_set': self.last_weights_set,
             }
         try:
@@ -320,16 +320,27 @@ class Validator:
                 top_uids_to_eval.append(uid)
                 self.uid_last_retried_ts[uid] = now
 
-        # After a certain time, force re-evaluation of all models to make sure they can win
-        # on changing competition parameters or advantage factors
-        force_eval = False
-        if now - self.models_reset_ts > constants.GEN_MODEL_RETRY_INTERVAL:
-            bt.logging.info(f"Forcing re-evaluation of all models")
-            self.models_reset_ts = now
-            force_eval = True
+        # We need all models te be re-evaluated periodically, to make sure they
+        # can win on changing competition parameters or advantage factors.
+        # This is synchronized between validators by using UTC time, in order
+        # to keep their weights in sync as much as possible. By testing only a
+        # few extra models at a time, the weight setting interval is kept low
+        # (previously there was a "test all models" event which took way longer
+        # than a regular eval loop).
+        now = int(time.time())
+        interval = constants.GEN_MODEL_RETRY_INTERVAL
+        force_eval_frac = float(now%interval)/interval
+        force_eval_until_uid = int(force_eval_frac*constants.SUBNET_N_UIDS)
+        if self.force_eval_until_uid_last is None:
+            # note regarding negative modulo in python: -1%10==9
+            self.force_eval_until_uid_last = (force_eval_until_uid-constants.MODEL_RETRY_MAX_N_PER_LOOP)%constants.SUBNET_N_UIDS
+        n_forced_periodic = 0
+        n_unforced_updated = 0
+
+        bt.logging.info(f"Forcing re-evaluation of models with {self.force_eval_until_uid_last} < UID <= {force_eval_until_uid}")
 
         # Retrieve chain metadata, download new/forced models
-        start_uid = random.randint(0, len(new_metagraph.hotkeys))   # Pick random UID to start from
+        start_uid = random.randint(0, max(0,len(new_metagraph.hotkeys)-1))   # Pick random UID to start from
         cur_uid = start_uid
         while True:
             self.update_thread_ts = time.time()
@@ -337,18 +348,43 @@ class Validator:
 
             # Sync the model, if necessary.
             try:
-                with self.subtensor_lock:
-                    metadata = bt.extrinsics.serving.get_metadata(self.subtensor, self.config.netuid, hotkey)
-                    if metadata is not None:
-                        metadata = ModelMetadata.parse_chain_data(metadata)
-                # model_updater updater the model_tracker with metadata
-                force = force_eval or cur_uid in top_uids_to_eval
-                updated = asyncio.run(
-                    self.model_updater.sync_model(hotkey, metadata, force=force)
-                )
-                if updated:
-                    self.add_uid_to_competition(cur_uid, hotkey)
-                bt.logging.debug(f"Visited UID {cur_uid}/{hotkey}, updated={updated}, commitment: {metadata.id.format_label() if metadata else '---'}")
+                # check if the uid is in the range of models to force
+                force_periodic = False
+                if n_forced_periodic >= constants.MODEL_RETRY_MAX_N_PER_LOOP:
+                    # Already added enough models to force-retry.
+                    # The risk of systematically skipping certain UIDs is small, as
+                    # the range to include depends on current time, and validator
+                    # loops run freely.
+                    pass
+                elif self.force_eval_until_uid_last <= force_eval_until_uid:
+                    if self.force_eval_until_uid_last < cur_uid <= force_eval_until_uid:
+                        force_periodic = True
+                else:
+                    if cur_uid > self.force_eval_until_uid_last or cur_uid <= force_eval_until_uid:
+                        force_periodic = True
+
+                force = cur_uid in top_uids_to_eval or force_periodic
+
+                if not force and n_unforced_updated >= constants.MODEL_UNFORCED_N_PER_LOOP:
+                    bt.logging.debug(f"Skipped UID {cur_uid}/{hotkey}, already {n_unforced_updated} unforced model updates")
+                else:
+                    with self.subtensor_lock:
+                        metadata = bt.extrinsics.serving.get_metadata(self.subtensor, self.config.netuid, hotkey)
+                        if metadata is not None:
+                            metadata = ModelMetadata.parse_chain_data(metadata)
+
+                    updated = asyncio.run(
+                        self.model_updater.sync_model(hotkey, metadata, force=force)
+                    )
+                    remark = ''
+                    if updated:
+                        self.add_uid_to_competition(cur_uid, hotkey)
+                        if not force:
+                            n_unforced_updated += 1
+                        if force_periodic:
+                            n_forced_periodic += 1
+                            remark = ' (included for periodic evaluation)'
+                    bt.logging.debug(f"Visited UID {cur_uid}/{hotkey}, updated={updated}, commitment: {metadata.id.format_label() if metadata else '---'}{remark}")
             except Exception as e:
                 bt.logging.error(
                     f"Failed to sync model for UID {cur_uid}: {type(e).__name__} {e} \n {traceback.format_exc()}"
@@ -358,6 +394,7 @@ class Validator:
             if cur_uid == start_uid:
                 break
 
+        self.force_eval_until_uid_last = force_eval_until_uid
 
     def update_dynamic_config(self):
         now = time.time()
@@ -1000,7 +1037,7 @@ class Validator:
         while True:
             try:
                 self.current_block = self.metagraph.block.item()
-                await self.try_run_step(ttl=60 * 20)
+                await self.try_run_step(ttl=60 * 60)
                 self.save_state()
                 self.global_step += 1
 
