@@ -20,6 +20,18 @@
 from huggingface_hub.utils import disable_progress_bars
 disable_progress_bars()
 
+import sys
+import signal
+
+# Install a signal handler for clean shutdown; class Validator will install its
+# own shutdown handler.
+if __name__ == "__main__":
+    def early_shutdown(signum,stackframe):
+        print('SIGINT caught, exiting',file=sys.stderr)
+        sys.exit(-1)
+
+    signal.signal(signal.SIGINT, early_shutdown)
+
 import copy
 import datetime as dt
 import functools
@@ -34,7 +46,6 @@ import asyncio
 import pathlib
 import numpy as np
 import requests
-import sys
 import transformers
 from packaging.version import Version
 
@@ -1052,9 +1063,27 @@ class Validator:
                 step=self.global_step,
             )
 
+    def shutdown(self,signum,stackframe):
+        print('SIGINT caught, exiting',file=sys.stderr)
+        if self.wandb_run:
+            bt.logging.info("gracefully closing the wandb run...")
+            self.wandb_run.finish()
+        try:
+            if self.update_thread.is_alive():
+                pid = self.update_thread.native_id
+                print(f'killing update thread, PID={pid}',file=sys.stderr)
+                os.kill(pid,signal.SIGTERM)
+            print(f'joining update thread',file=sys.stderr)
+            self.update_thread.join()
+        except Exception as e:
+            print(f'exception trying to stop update_thread: {e}')
+        sys.exit(-1)
+
     async def run(self):
         """Runs the validator loop, which continuously evaluates models and sets weights."""
-        # Give check_top_models some time
+        # Install signal handler for clean shutdown.
+        signal.signal(signal.SIGINT, self.shutdown)
+        # Give update thread some time to fetch initial state from chain.
         await asyncio.sleep(60)
         while True:
             try:
@@ -1067,14 +1096,6 @@ class Validator:
                     await self.try_set_weights(ttl=60)
                 self.last_epoch = self.metagraph.block.item()
                 self.epoch_step += 1
-
-            except KeyboardInterrupt:
-                bt.logging.info(
-                    "KeyboardInterrupt caught, gracefully closing the wandb run..."
-                )
-                if self.wandb_run:
-                    self.wandb_run.finish()
-                exit()
 
             except Exception as e:
                 bt.logging.error(
