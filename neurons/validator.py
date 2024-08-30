@@ -677,12 +677,18 @@ class Validator:
 
         # Currently, all competitions use the same dataset.
         # Fetch samples that are shared between all competitions
-        dataloader = dataset.SubsetFineWebEdu2Loader(
-            batch_size=1,
-            num_pages=0,
-            tokenizer=None,
-            pack=False
-        )
+        try:
+            dataloader = dataset.SubsetFineWebEdu2Loader(
+                batch_size=1,
+                num_pages=0,
+                tokenizer=None,
+                pack=False
+            )
+        except requests.exceptions.RequestException as e:
+            bt.logging.warning(f"Exception instantiating dataloader: {e}. Waiting one minute before retrying.")
+            await asyncio.sleep(60)
+            return
+
         samples = dataloader.fetch_data_to_rows(constants.n_eval_pages)
         if len(samples) == 0:
             bt.logging.warning(f"No samples to eval. Waiting one minute before retrying.")
