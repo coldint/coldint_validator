@@ -842,7 +842,9 @@ class Validator:
 
         # Sort models by weight / win_rate, keep pool_size entries
         pool_size = cinfo.get('pool_size', constants.DEFAULT_POOL_SIZE)
-        new_uids_pool = list(sorted(model_weights, key=model_weights.get, reverse=True)[:pool_size])
+        win_rate_indices = win_rate.argsort()[-pool_size:]
+        new_uids_pool = [uids_pool[i] for i in win_rate_indices]
+        bt.logging.warning(f'selected {pool_size} winning models: {new_uids_pool}')
 
         # Update state: weights and which uids to keep for next run
         with self.state_lock:
