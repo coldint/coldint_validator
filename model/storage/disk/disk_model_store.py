@@ -2,6 +2,8 @@ import trace
 import traceback
 import bittensor as bt
 from typing import Dict
+import os
+import shutil
 
 import torch
 from model.data import Model, ModelId
@@ -45,6 +47,25 @@ class DiskModelStore(LocalModelStore):
         # Return the same model id used as we do not edit the commit information.
         return model.id
 
+    def delete_model(self, hotkey, model_id):
+        '''
+        Remove a model
+        '''
+        path = utils.get_local_model_snapshot_dir(self.base_dir, hotkey, model_id)
+        if not os.path.exists(path):
+            bt.logging.debug(f"delete_model(): path {path} does not exist")
+            return False
+        try:
+            dir_size = sum(f.stat().st_size for f in Path(path).glob('**/*') if f.is_file())
+            shutil.rmtree(path=path, ignore_errors=True)
+            bt.logging.trace(
+                f"Removed directory {path}, freed {dir_size} bytes = {dir_size/1e9:.1f} GB."
+            )
+        except Exception:
+            bt.logging.warning(traceback.format_exc())
+            return False
+        return True
+
     def retrieve_model(
         self, hotkey: str, model_id: ModelId, optimized: bool = True, path=None
     ) -> Model:
@@ -66,7 +87,7 @@ class DiskModelStore(LocalModelStore):
         return Model(id=model_id, pt_model=model)
 
     def delete_unreferenced_models(
-        self, valid_models_by_hotkey: Dict[str, ModelId], grace_period_seconds: int
+        self, valid_models_by_hotkey: Dict[str, ModelId], grace_period_seconds: int, gb_to_delete: int = 0
     ):
         """Check across all of local storage and delete unreferenced models out of grace period."""
         # Expected directory structure is as follows.
@@ -83,19 +104,28 @@ class DiskModelStore(LocalModelStore):
         miners_dir = Path(utils.get_local_miners_dir(self.base_dir))
         hotkey_subfolder_names = [d.name for d in miners_dir.iterdir() if d.is_dir()]
 
+        bytes_to_delete = 1e15
+        if gb_to_delete:
+            bytes_to_delete = 1e9*gb_to_delete
+        bytes_deleted = 0
+
         for hotkey in hotkey_subfolder_names:
+            if bytes_deleted >= bytes_to_delete:
+                break
             try:
                 # Reconstruct the path from the hotkey
                 hotkey_path = utils.get_local_miner_dir(self.base_dir, hotkey)
 
                 # If it is not in valid_hotkeys and out of grace period remove it.
                 if hotkey not in valid_models_by_hotkey:
+                    dir_size = sum(f.stat().st_size for f in Path(hotkey_path).glob('**/*') if f.is_file())
                     deleted_hotkey = utils.remove_dir_out_of_grace(
                         hotkey_path, grace_period_seconds
                     )
                     if deleted_hotkey:
+                        bytes_deleted += dir_size
                         bt.logging.trace(
-                            f"Removed directory for unreferenced hotkey: {hotkey}."
+                            f"Removed directory for unreferenced hotkey: {hotkey}, freed {dir_size} bytes = {dir_size/1e9:.1f} GB."
                         )
 
                 else:
@@ -122,13 +152,17 @@ class DiskModelStore(LocalModelStore):
                             # Reached the end. Check all the actual commit subfolders for the files.
                             for commit_path in commit_subfolder_paths:
                                 if commit_path not in valid_model_paths:
+                                    dir_size = sum(f.stat().st_size for f in Path(commit_path).glob('**/*') if f.is_file())
                                     deleted_model = utils.remove_dir_out_of_grace(
                                         commit_path, grace_period_seconds
                                     )
                                     if deleted_model:
+                                        bytes_deleted += dir_size
                                         bt.logging.trace(
-                                            f"Removing directory for unreferenced model at: {commit_path}."
+                                            f"Removing directory for unreferenced model at: {commit_path}, freed {dir_size} bytes = {dir_size/1e9:.1f} GB."
                                         )
             except Exception:
                 # Catch the exception so we continue with the rest of the cleanup.
                 bt.logging.warning(traceback.format_exc())
+
+        bt.logging.trace(f'cleanup done: deleted {bytes_deleted} bytes = {bytes_deleted/1e9:.1f} GB.')

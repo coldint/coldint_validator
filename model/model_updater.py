@@ -79,10 +79,17 @@ class ModelUpdater:
                 use_safetensors=True,
             )
         else:
+            model_size_limit = cparams.get('model_size', constants.MAX_MODEL_SIZE)
+            statvfs = os.statvfs(self.local_store.base_dir)
+            bytes_free = statvfs.f_bsize*statvfs.f_bavail
+            bytes_free_required = model_size_limit + constants.DOWNLOAD_MIN_FREE_MARGIN_GB*1e9
+            if bytes_free < bytes_free_required:
+                gb_total = int(statvfs.f_frsize*statvfs.f_blocks//1e9)
+                bt.logging.warning(f'not downloading model {metadata.id}: {bytes_free/1e9:.1f} of {gb_total} GB free while {bytes_free_required/1e9:.1f} GB required')
+                return False
             path = self.local_store.get_path(hotkey)
+            bt.logging.debug(f"download_model({metadata.id}) to {path}")
             try:
-                bt.logging.debug(f"download_model({metadata.id}) to {path}")
-                model_size_limit = cparams.get('model_size', constants.MAX_MODEL_SIZE)
                 model = await self.remote_store.download_model(
                     metadata.id, path, model_size_limit
                 )

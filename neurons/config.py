@@ -52,6 +52,13 @@ def validator_config():
         type=str,
         help="Write step JSON file here",
     )
+    parser.add_argument(
+        "--model_store_size_gb",
+        default=-constants.DEFAULT_MIN_FREE_GB,
+        metavar='GB',
+        type=int,
+        help="Maximum size of model store (>0) or minimum space to keep free on disk (<=0) after model cleanup; please keep enough free space to download new models.",
+    )
 
     bt.subtensor.add_args(parser)
     bt.logging.add_args(parser)

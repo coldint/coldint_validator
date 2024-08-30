@@ -31,6 +31,7 @@ import time
 import torch
 import random
 import asyncio
+import pathlib
 import numpy as np
 import requests
 import sys
@@ -187,6 +188,10 @@ class Validator:
 
         # Setup a LocalModelStore
         self.local_store = DiskModelStore(base_dir=self.config.model_dir)
+        min_free_gb = constants.LIMIT_MIN_FREE_GB
+        if -min_free_gb < self.config.model_store_size_gb <= 0:
+            self.config.model_store_size_gb = -min_free_gb
+            bt.logging.warning(f'Model store size limit set to keep {min_free_gb} GB free.')
 
         # Setup a model updater to download models as needed to match the latest provided miner metadata.
         bt.logging.trace("Starting ModelUpdater")
@@ -207,16 +212,10 @@ class Validator:
         self.update_thread = threading.Thread(target=self.update_thread_func, daemon=True)
         self.update_thread.start()
 
-        # Initialize the cleaner thread to remove outdated models
-        bt.logging.trace("Starting clean_models thread")
-        self.clean_thread = threading.Thread(target=self.clean_models, daemon=True)
-        self.clean_thread.start()
-
     def __del__(self):
         if hasattr(self, "stop_event"):
             self.stop_event.set()
             self.update_thread.join()
-            self.clean_thread.join()
 
     def new_wandb_run(self):
         """Creates a new wandb run to save information to."""
@@ -434,7 +433,9 @@ class Validator:
 
     def update_thread_func(self):
         """
-        Updates all remote metadata: chain, competitions, hall of famae.
+        Updates all remote metadata: chain, competitions, hall of fame.
+        Fetches all models needed for evaluation.
+        Deletes models that are not needed, subject to diskspace requirements.
         """
 
         # Timestamp when we last retried models with incentive we've already dropped
@@ -445,6 +446,11 @@ class Validator:
         self.last_chain_update = None
 
         while not self.stop_event.is_set():
+            try:
+                self.clean_models()
+            except Exception as e:
+                bt.logging.error(f"Error cleaning models: {e}, {traceback.format_exc()}")
+
             try:
                 self.update_dynamic_config()
             except Exception as e:
@@ -464,53 +470,66 @@ class Validator:
     def clean_models(self):
         """Cleans up models that are no longer referenced."""
 
-        # Delay the clean-up thread until the update loop has had time to run one full pass after an upgrade.
-        # This helps prevent unnecessarily deleting a model which is on disk, but hasn't yet been re-added to the
-        # model tracker by the update loop.
-        time.sleep(dt.timedelta(hours=1).total_seconds())
+        base_dir = pathlib.Path(self.local_store.base_dir)
+        if not base_dir.exists():
+            # Nothing to clean
+            return
+        size_limit = self.config.model_store_size_gb
+        disk_used = sum(f.stat().st_size for f in base_dir.glob('**/*') if f.is_file())
+        gb_in_use = 1+(disk_used//1e9)
+        statvfs = os.statvfs(base_dir)
+        gb_total = int(statvfs.f_frsize*statvfs.f_blocks//1e9)
+        gb_free = statvfs.f_bsize*statvfs.f_bavail//1e9
 
-        # The below loop checks to clear out all models in local storage that are no longer referenced.
-        while not self.stop_event.is_set():
-            try:
-                bt.logging.trace("Starting cleanup of stale models.")
+        if size_limit>0:
+            use_str = f"{gb_in_use} of {gb_total} GB in use, limit is {size_limit} GB"
+            if gb_in_use < size_limit:
+                bt.logging.trace(f"Skipping cleanup of stale models; {use_str}")
+                return
+            bt.logging.trace(f"Starting cleanup of stale models; {use_str}")
+            gb_to_delete = size_limit - gb_in_use
+        else:
+            min_free = -size_limit
+            use_str = f"{gb_in_use} of {gb_total} GB in use, {gb_free} GB free, minimum required is {min_free} GB free"
+            if gb_free > min_free:
+                bt.logging.trace(f"Skipping cleanup of stale models; {use_str}")
+                return
+            bt.logging.trace(f"Starting cleanup of stale models; {use_str}")
+            gb_to_delete = min_free - gb_free
 
-                # Get a mapping of all hotkeys to model ids.
-                hotkey_to_model_metadata = (
-                    self.model_tracker.get_miner_hotkey_to_model_metadata_dict()
-                )
-                hotkey_to_model_id = {
-                    hotkey: metadata.id
-                    for hotkey, metadata in hotkey_to_model_metadata.items()
-                }
+        bt.logging.trace(f"attempting to delete at least {gb_to_delete} GB")
 
-                # Find all hotkeys that are currently being evaluated or pending eval.
-                uids_to_keep = self.get_all_active_uids()
+        # Get a mapping of all hotkeys to model ids.
+        hotkey_to_model_metadata = (
+            self.model_tracker.get_miner_hotkey_to_model_metadata_dict()
+        )
+        hotkey_to_model_id = {
+            hotkey: metadata.id
+            for hotkey, metadata in hotkey_to_model_metadata.items()
+        }
 
-                with self.metagraph_lock:
-                    # Injected models might not be in metagraph
-                    hotkeys_to_keep = set([
-                        self.metagraph.hotkeys[uid]
-                            for uid in uids_to_keep if uid < len(self.metagraph.hotkeys)
-                    ])
+        # Find all hotkeys that are currently being evaluated or pending eval.
+        uids_to_keep = self.get_all_active_uids()
 
-                # Only keep those hotkeys.
-                evaluated_hotkeys_to_model_id = {
-                    hotkey: model_id
-                    for hotkey, model_id in hotkey_to_model_id.items()
-                    if hotkey in hotkeys_to_keep
-                }
+        with self.metagraph_lock:
+            # Injected models might not be in metagraph
+            hotkeys_to_keep = set([
+                self.metagraph.hotkeys[uid]
+                    for uid in uids_to_keep if uid < len(self.metagraph.hotkeys)
+            ])
 
-                self.local_store.delete_unreferenced_models(
-                    valid_models_by_hotkey=evaluated_hotkeys_to_model_id,
-                    grace_period_seconds=300,
-                )
-            except Exception as e:
-                bt.logging.error(f"Error in clean loop: {e}, {traceback.format_exc()}")
+        # Only keep those hotkeys.
+        evaluated_hotkeys_to_model_id = {
+            hotkey: model_id
+            for hotkey, model_id in hotkey_to_model_id.items()
+            if hotkey in hotkeys_to_keep
+        }
 
-            # Only check every 5 minutes.
-            time.sleep(dt.timedelta(minutes=5).total_seconds())
-
-        bt.logging.info("Exiting clean models loop.")
+        self.local_store.delete_unreferenced_models(
+            valid_models_by_hotkey=evaluated_hotkeys_to_model_id,
+            grace_period_seconds=300,
+            gb_to_delete=gb_to_delete,
+        )
 
     async def try_set_weights(self, ttl: int):
         """Sets the weights on the chain with ttl, without raising exceptions if it times out."""
