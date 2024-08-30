@@ -288,7 +288,6 @@ class Validator:
         if self.last_chain_update is not None and \
                 (now - self.last_chain_update) < constants.CHAIN_UPDATE_INTERVAL:
             return
-        self.last_chain_update = now
 
         # We would like to run chain interaction commands with a timeout, but there is no
         # straightforward method to do that using threads (as all options with a timeout
@@ -304,6 +303,8 @@ class Validator:
         with self.metagraph_lock:
             self.metagraph = copy.deepcopy(new_metagraph)
             self.model_tracker.on_hotkeys_updated(set(self.metagraph.hotkeys))
+
+        self.last_chain_update = now
 
         bt.logging.warning(f"Synced metagraph with {len(self.metagraph.neurons)} neurons")
 
