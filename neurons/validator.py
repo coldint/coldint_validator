@@ -590,15 +590,12 @@ class Validator:
 
 
     async def try_run_step(self, ttl: int):
-        """Runs a step with ttl in a background process, without raising exceptions if it times out."""
-
-        async def _try_run_step():
-            await self.run_step()
-
+        """Runs a step with ttl, without raising exceptions if it times out."""
         try:
-            bt.logging.trace("Running step.")
-            await asyncio.wait_for(_try_run_step(), ttl)
-            bt.logging.trace("Finished running step.")
+            bt.logging.trace(f"Running step with ttl {ttl}.")
+            t0 = time.time()
+            await asyncio.wait_for(self.run_step(), ttl)
+            bt.logging.trace("Finished running step in {time.time()-t0:.1f}s.")
         except asyncio.TimeoutError:
             bt.logging.error(f"Failed to run step after {ttl} seconds")
 
