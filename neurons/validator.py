@@ -101,6 +101,7 @@ class Validator:
                 bt.logging.info(f"Invalid state file: {e}")
 
         self.models_reset_ts = 0
+        self.last_weights_set = time.time()
         with self.state_lock:
             if 'version' in state and state['version'] == constants.__spec_version__:
                 self.hall_of_fame = state.pop("hall_of_fame", {})
@@ -109,6 +110,7 @@ class Validator:
                 self.cstate = state.pop('cstate', {})
                 bt.logging.info("State loaded successfully")
                 self.models_reset_ts = state.pop("models_reset_ts", 0)
+                self.last_weights_set = state.pop("last_weights_set", time.time())
             else:
                 bt.logging.info("State version incompatible, starting with clean state")
                 tracker_state = {}
@@ -126,6 +128,7 @@ class Validator:
                 'tracker': self.model_tracker.get_state(),
                 'cstate': self.cstate,
                 'models_reset_ts': self.models_reset_ts,
+                'last_weights_set': self.last_weights_set,
             }
         try:
             with open(os.path.join(self.state_path(), Validator.STATE_FILENAME), 'wb') as f:
@@ -167,6 +170,7 @@ class Validator:
         self.epoch_step = 0
         self.global_step = 0
         self.last_epoch = self.metagraph.block.item()
+        self.last_weights_set = time.time() # Don't set weights early
 
         # model_tracker tracks which miner is using which model id.
         self.state_lock = threading.RLock()
@@ -472,6 +476,8 @@ class Validator:
 
     async def try_set_weights(self, ttl: int):
         """Sets the weights on the chain with ttl, without raising exceptions if it times out."""
+        if self.last_weights_set is not None and time.time() - self.last_weights_set < constants.WEIGHT_SET_MIN_INTERVAL:
+            return
 
         # Prepare and log weights
         self.weights.nan_to_num(0.0)
@@ -503,8 +509,12 @@ class Validator:
                 wait_for_inclusion=True,
                 version_key=constants.weights_version_key,
             )
-            await asyncio.wait_for(call, ttl)
-            bt.logging.warning(f"Finished setting weights.")
+            ret,msg = await asyncio.wait_for(call, ttl)
+            if ret:
+                self.last_weights_set = time.time()
+                bt.logging.warning(f"Finished setting weights at {self.last_weights_set}.")
+            else:
+                bt.logging.warning(f"Failed to set weights: {msg}")
         except asyncio.TimeoutError:
             bt.logging.error(f"Failed to set weights after {ttl} seconds")
         except Exception as e:
@@ -989,17 +999,10 @@ class Validator:
         await asyncio.sleep(60)
         while True:
             try:
-                while (
-                        (self.metagraph.block.item() - self.last_epoch)
-                        < self.config.blocks_per_epoch
-                ):
-                    self.current_block = self.metagraph.block.item()
-                    await self.try_run_step(ttl=60 * 20)
-                    self.save_state()
-                    bt.logging.debug(
-                        f"{self.metagraph.block.item() - self.last_epoch } / {self.config.blocks_per_epoch} blocks until next epoch."
-                    )
-                    self.global_step += 1
+                self.current_block = self.metagraph.block.item()
+                await self.try_run_step(ttl=60 * 20)
+                self.save_state()
+                self.global_step += 1
 
                 if not self.config.dont_set_weights and not self.config.offline:
                     await self.try_set_weights(ttl=60)

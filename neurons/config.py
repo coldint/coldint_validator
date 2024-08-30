@@ -21,12 +21,6 @@ def validator_config():
         help="Turn off wandb logging.",
     )
     parser.add_argument(
-        "--blocks_per_epoch",
-        type=int,
-        default=50,
-        help="Number of blocks to wait before setting weights.",
-    )
-    parser.add_argument(
         "--pages_per_eval",
         type=int,
         default=constants.n_eval_pages,
