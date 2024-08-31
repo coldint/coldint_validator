@@ -1158,10 +1158,28 @@ def check_and_compute_losses(
         },
     }
 
+def assert_cuda():
+    if transformers.utils.is_flash_attn_2_available():
+        bt.logging.warning('Flash Attention 2 is available, according to transformers.')
+        return
+    import importlib
+    bt.logging.error('Flash Attention 2 is not available, according to transformers. Possible issues:')
+    if not transformers.utils.is_torch_available():
+        bt.logging.error('torch is not available, according to transformers')
+    if not transformers.utils.is_torch_mlu_available():
+        bt.logging.error('torch_mlu is not available, according to transformers')
+    if not torch.cuda.is_available():
+        bt.logging.error('cuda is not available, according to torch')
+    bt.logging.error(f'torch.version.cuda = {torch.version.cuda}')
+    flash_attn_version = importlib.metadata.version("flash_attn")
+    bt.logging.error(f'flash_attn version = {flash_attn_version}')
+    sys.exit(-1)
 
 if __name__ == "__main__":
     if Version(transformers.__version__) < Version(TRANSFORMERS_VERSION_MIN):
         bt.logging.error(f"Transformers version >= {TRANSFORMERS_VERSION_MIN} required")
         sys.exit()
+
+    assert_cuda()
 
     asyncio.run(Validator().run())
