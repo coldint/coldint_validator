@@ -762,6 +762,7 @@ class Validator:
         losses_per_uid = {uid: None for uid in uids_pool}
         losses_pt_per_uid = {uid: None for uid in uids_pool}
         avg_sample_len_per_uid = {uid: None for uid in uids_pool}
+        model_geometry_per_uid = {uid: {} for uid in uids_pool}
         uid_to_label = {uid: '' for uid in uids_pool}
         uid_to_block = {uid: 1<<31 for uid in uids_pool}
         n_evaluated = 0
@@ -817,7 +818,7 @@ class Validator:
                     raise Exception("No tokenizer available (no default and not supplied in model)")
 
 
-                losses,losses_pt,avg_sample_len = utils.run_in_subprocess(
+                eval_results = utils.run_in_subprocess(
                     functools.partial(
                         check_and_compute_losses,
                         local_store=self.local_store,
@@ -832,12 +833,15 @@ class Validator:
                     expected_errors={"ModelIssue"},
                 )
 
+                losses = eval_results['losses']
+                losses_pt = eval_results['losses_pt']
                 n_evaluated += 1
 
                 losses_per_uid[uid] = losses
                 losses_pt_per_uid[uid] = losses_pt
-                avg_sample_len_per_uid[uid] = avg_sample_len
-                bt.logging.debug(f"Losses for uid:{uid}, per token: {naninf_mean(losses_pt):.03f} +- {naninf_std(losses_pt):.03f}, sum {naninf_mean(losses):.01f} +- {naninf_std(losses):.01f}, avg sample len: {avg_sample_len:.01f}")
+                avg_sample_len_per_uid[uid] = eval_results['avg_sample_length']
+                model_geometry_per_uid[uid] = eval_results['model_geometry']
+                bt.logging.debug(f"Losses for uid:{uid}, per token: {naninf_mean(losses_pt):.03f} +- {naninf_std(losses_pt):.03f}, sum {naninf_mean(losses):.01f} +- {naninf_std(losses):.01f}, avg sample len: {eval_results['avg_sample_length']:.01f}")
 
             except ModelIssue as e:
                 bt.logging.info(
@@ -896,6 +900,7 @@ class Validator:
         for uid in uids_pool:
             self.step_uid_log[uid] = {
                 "uid": uid,
+                "geometry": model_geometry_per_uid.get(uid,{}),
                 "competition": cname,
                 "label": uid_to_label.get(uid, ''),
                 "block": uid_to_block.get(uid, 1<<31),
@@ -1131,15 +1136,27 @@ def check_and_compute_losses(
         # Currently supported models should have the queried parameter, but in case they don't, just skip this check.
         bt.logging.warning(f'could not find embed size, skipping check: {e}')
 
-    if embed_size and max_token_id>=embed_size:
-        raise ModelIssue(f"Vocabulary size mismatch between tokenizer and model: {max_token_id} >= {embed_size}")
+    if embed_size:
+        if max_token_id>=embed_size:
+            raise ModelIssue(f"Vocabulary size mismatch between tokenizer and model: {max_token_id} >= {embed_size}")
+    else:
+        embed_size = max_token_id
 
     losses = validation.compute_losses(model_i.pt_model,allow_sliced,batches,device)
     losses_pt = [loss_sum / len(batch[0]) if batch is not None else math.inf for loss_sum, batch in zip(losses, batches)]
     sample_lengths = [len(batch[0]) for batch in batches if batch is not None]
     avg_sample_length = 0 if len(sample_lengths) == 0 else np.mean(sample_lengths)
 
-    return losses,losses_pt,avg_sample_length
+    return {
+        'losses':losses,
+        'losses_pt':losses_pt,
+        'avg_sample_length':avg_sample_length,
+        'model_geometry':{
+            'n_parameters':model_i.pt_model.num_parameters(),
+            'n_layers':model_i.pt_model.config.num_hidden_layers,
+            'embed_size':embed_size,
+        },
+    }
 
 
 if __name__ == "__main__":
