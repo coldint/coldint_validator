@@ -161,9 +161,8 @@ class Validator:
         # === Bittensor objects ====
         self.wallet = bt.wallet(config=self.config)
         self.subtensor = btlite.get_subtensor(config=self.config)
-        self.subtensor_lock = threading.RLock()
         self.dendrite = bt.dendrite(wallet=self.wallet)
-        self.metagraph = self.subtensor.metagraph(self.config.netuid, lite=False)
+        self.metagraph = self.get_metagraph()
         torch.backends.cudnn.benchmark = True
 
         # Dont check registration status if offline.
@@ -280,15 +279,18 @@ class Validator:
     def get_metagraph(self, n_retries=3):
         for i in range(n_retries):
             try:
-                metagraph = self.subtensor.metagraph(self.config.netuid, lite=False)
+                metagraph = btlite.get_metagraph(
+                    subtensor=self.subtensor,
+                    netuid=self.config.netuid,
+                    lite=False,
+                    reconnect=False, # in case of connection issues, we re-create the subtensor
+                )
                 if metagraph is not None:
                     return metagraph
             except Exception as e:
                 bt.logging.warning(f"Failed to get metagraph {i+1}/{n_retries}: {e}\n{traceback.format_exc()}")
             bt.logging.info("Reconnecting subtensor")
-            st = btlite.get_subtensor(config=self.config)
-            with self.subtensor_lock:
-                self.subtensor = st
+            self.subtensor = btlite.get_subtensor(config=self.config)
 
         bt.logging.error(f"Failed to get metagraph {n_retries} times, giving up")
         return None
@@ -379,10 +381,14 @@ class Validator:
                 if not force and n_unforced_updated >= constants.MODEL_UNFORCED_N_PER_LOOP:
                     bt.logging.debug(f"Skipped UID {cur_uid}/{hotkey}, already {n_unforced_updated} unforced model updates")
                 else:
-                    with self.subtensor_lock:
-                        metadata = bt.extrinsics.serving.get_metadata(self.subtensor, self.config.netuid, hotkey)
-                        if metadata is not None:
-                            metadata = ModelMetadata.parse_chain_data(metadata)
+                    metadata = btlite.get_metadata(
+                        subtensor=self.subtensor,
+                        netuid=self.config.netuid,
+                        hotkey=hotkey,
+                        reconnect=True,
+                    )
+                    if metadata is not None:
+                        metadata = ModelMetadata.parse_chain_data(metadata)
 
                     updated = asyncio.run(
                         self.model_updater.sync_model(hotkey, metadata, force=force)
