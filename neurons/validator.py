@@ -358,7 +358,7 @@ class Validator:
                 bt.logging.debug(f"Visited UID {cur_uid}/{hotkey}, updated={updated}, commitment: {metadata.id.format_label() if metadata else '---'}")
             except Exception as e:
                 bt.logging.error(
-                    f"Failed to sync model for UID {cur_uid}: {e} \n {traceback.format_exc()}"
+                    f"Failed to sync model for UID {cur_uid}: {type(e).__name__} {e} \n {traceback.format_exc()}"
                 )
 
             cur_uid = (cur_uid + 1) % len(new_metagraph.hotkeys)
