@@ -70,11 +70,17 @@ def _wrapped_func(func: functools.partial, log_queue: multiprocessing.Queue, que
         if log_queue is not None:
             # This feature is not (yet) available on bittensor
             #bt.logging.set_queue(log_queue)
-            # Hack in a queue handler, avoid private variables
+            # Hack in a queue handler, avoid private variables where possible.
             try:
                 logger = stdlogging.getLogger(BITTENSOR_LOGGER_NAME)
                 while len(logger.handlers):
                     logger.removeHandler(logger.handlers[0])
+                try:
+                    # This is needed to prevent EOFError clutter on subprocess termination.
+                    atexit.unregister(bt.logging._listener.stop)
+                    bt.logging._listener.stop()
+                except Exception as e:
+                    print(f'Non-fatal: exception trying to stop btlogger listener: {e}')
                 queue_handler = QueueHandler(log_queue)
                 logger.addHandler(queue_handler)
                 queue_handler.setLevel(stdlogging.INFO)
@@ -95,6 +101,8 @@ def run_in_subprocess(func: functools.partial, ttl: int, mode="fork", expected_e
     Args:
         func (functools.partial): Function to be run.
         ttl (int): How long to try for in seconds.
+        mode: "fork" or "spawn"
+        expected_errors: exception type names that are expected and don't need to be logged here
 
     Returns:
         Any: The value returned by 'func'
