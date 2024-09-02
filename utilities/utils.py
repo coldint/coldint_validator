@@ -140,19 +140,56 @@ def run_in_subprocess(func: functools.partial, ttl: int, mode="fork", expected_e
     try:
         result = queue.get(block=False)
     except Exception as e:
-        raise Exception(f"Failed to get result from subprocess {func.func.__name__}(*args={func.args},**kwargs={func.keywords}): {e}") from None
+        kw_keys = ''
+        if func.keywords is not None:
+            try:
+                kw_keys = ','.join([str(k) for k in func.keywords])
+            except:
+                pass
+        if type(e).__name__ == 'Empty':
+            raise Exception(f"Subprocess timed out with ttl {ttl}: {func.func.__name__}(*args={func.args},**kwargs.keys={kw_keys}): {e}") from None
+        raise Exception(f"Failed to get result from subprocess {func.func.__name__}(*args={func.args},**kwargs.keys={kw_keys}): {e}") from None
 
     if not isinstance(result,tuple):
         raise Exception(f"Unexpected result from subprocess, type {type(result)}: {result}")
 
-    # If we put an exception on the queue then raise instead of returning.
-    if isinstance(result[0], Exception):
-        if type(result[0]).__name__ not in expected_errors:
-            bt.logging.error(f"Exception in subprocess:\n{result[1]}")
-        raise result[0]
+    error_result = None
+    re_raise = True
     if isinstance(result[0], BaseException):
-        bt.logging.error(f"BaseException in subprocess:\n{result[1]}")
-        raise Exception(f"BaseException raised in subprocess: {str(result[0])}")
+        error_result = result
+
+    # Check again to see if an exception occurred after finishing and posting result
+    try:
+        second_result = queue.get(block=False)
+        if len(second_result)==1:
+            raise Exception(f"Subprocess {func.func.__name__}(*args={func.args},**kwargs={func.keywords}) violated protocol by returning two results")
+        if not isinstance(second_result[0], BaseException):
+            raise Exception(f"Subprocess {func.func.__name__}(*args={func.args},**kwargs={func.keywords}) violated protocol by returning non-exception error")
+        if error_result is None:
+            error_result = second_result
+            re_raise = False # we still have a result, so use it, just log the error
+        else:
+            e = second_result[0]
+            bt.logging.error(f'Secondary exception from subprocess: {type(e).__name__} {e}')
+    except Exception as e:
+        if type(e).__name__ == 'Empty':
+            pass # this is expected
+        else:
+            raise e
+
+    # If we put an exception on the queue then raise instead of returning.
+    ignored = '' if re_raise else ' (ignored; the process finished successfully)'
+    if error_result is None:
+        pass
+    elif isinstance(error_result[0], Exception):
+        if type(error_result[0]).__name__ not in expected_errors:
+            bt.logging.error(f"Exception in subprocess{ignored}:\n{error_result[1]}")
+        if re_raise:
+            raise error_result[0]
+    elif isinstance(error_result[0], BaseException):
+        bt.logging.error(f"BaseException in subprocess{ignored}:\n{error_result[1]}")
+        if re_raise:
+            raise Exception(f"BaseException raised in subprocess: {str(error_result[0])}")
 
     return result[0]
 
