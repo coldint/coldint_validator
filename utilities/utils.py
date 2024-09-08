@@ -249,19 +249,19 @@ def list_top_miners(metagraph: bt.metagraph) -> List[int]:
     valis_by_stake = get_top_valis(metagraph, 10)
 
     # For each, find the miner that has more than 50% of the weights.
-    for uid in valis_by_stake:
-        if uid >= len(metagraph.weights):
+    for vali_uid in valis_by_stake:
+        if vali_uid >= len(metagraph.weights):
             bt.logging.warning(f"Vali UID {uid} not in metagraph.weights")
             continue
 
-        weights = [(uid, w) for uid, w in enumerate(metagraph.weights[uid]) if w > 0]
+        weights = [(u, w) for u, w in enumerate(metagraph.weights[vali_uid]) if w > 0]
         total_weight = sum(weight for _, weight in weights)
 
-        # Only look for miners with at least half the weight from this vali
+        # Get miners with weight > threshold
         threshold = constants.TOP_MINER_FRACTION * total_weight
-        for uid, weight in weights:
+        for miner_uid, weight in weights:
             if weight > threshold:
-                top_miners.add(uid)
+                top_miners.add(miner_uid)
 
     return list(top_miners)
 
