@@ -70,6 +70,7 @@ advantage_decay_per_epoch = 0.995
 n_eval_pages = 8
 
 DEFAULT_POOL_SIZE = 6
+DEFAULT_PEND_SIZE = 6
 
 CHAIN_UPDATE_INTERVAL       = 16*60
 TOP_MODEL_RETRY_INTERVAL    = 4*3600
