@@ -254,6 +254,11 @@ def list_top_miners(metagraph: bt.metagraph) -> List[int]:
             bt.logging.warning(f"Vali UID {uid} not in metagraph.weights")
             continue
 
+        update_age_blocks = metagraph.block.item() - metagraph.last_update[vali_uid]
+        if update_age_blocks > constants.MAX_VALIDATOR_AGE_BLOCKS:
+            bt.logging.info(f"Ignoring validator {vali_uid}, updated {update_age_blocks} blocks ago")
+            continue
+
         weights = [(u, w) for u, w in enumerate(metagraph.weights[vali_uid]) if w > 0]
         total_weight = sum(weight for _, weight in weights)
 
