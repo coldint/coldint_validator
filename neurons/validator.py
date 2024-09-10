@@ -68,7 +68,6 @@ from rich.table import Table
 from rich.console import Console
 
 import bittensor as bt
-from utilities.miner_iterator import MinerIterator
 from utilities import utils, btlite
 from utilities.perf_monitor import PerfMonitor
 from utilities.mathutils import *
@@ -189,9 +188,6 @@ class Validator:
 
         # Load or initialize internal state
         self.load_state()
-
-        # Setup a miner iterator to ensure we update all miners.
-        self.miner_iterator = MinerIterator(self.metagraph.uids.tolist())
 
         # Setup a RemoteModelStore
         self.remote_store = HuggingFaceModelStore()
