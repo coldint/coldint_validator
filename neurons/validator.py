@@ -698,8 +698,10 @@ class Validator:
             return
 
         n_models_evaluated = 0
+        t_per_competition = constants.TTL_RUN_STEP/len(self.competitions)
         for cname in self.competitions:
-            n_models_evaluated += self.run_step_for_competition(cname, dataloader)
+            ts_expire = time.time() + t_per_competition
+            n_models_evaluated += self.run_step_for_competition(cname, dataloader, ts_expire=ts_expire)
 
         if n_models_evaluated == 0:
             bt.logging.debug("No uids to eval. Waiting 2 minutes to download some models.")
@@ -717,7 +719,7 @@ class Validator:
         # Increment the number of completed run steps by 1
         self.run_step_count += 1
 
-    def run_step_for_competition(self, cname, dataloader):
+    def run_step_for_competition(self, cname, dataloader, ts_expire=None):
         """
         Run step for one of the competitions
         Return number of uids evaluated
@@ -769,6 +771,10 @@ class Validator:
         uid_to_block = {uid: 1<<31 for uid in uids_pool}
         n_evaluated = 0
         for uid in uids_pool:
+            if ts_expire is not None and time.time() > ts_expire:
+                bt.logging.warning("Model eval loop taking too long, interrupting")
+                break
+
             bt.logging.trace(f"Computing model losses for uid {uid}.")
             metadata = self.get_uid_metadata(uid)
 
@@ -830,7 +836,7 @@ class Validator:
                         max_token_id=max_token_id,
                         device=self.config.device,
                     ),
-                    ttl=360,
+                    ttl=constants.TTL_MODEL_EVAL,
                     mode="spawn",
                     expected_errors={"ModelIssue"},
                 )
@@ -1098,7 +1104,7 @@ class Validator:
         while True:
             try:
                 self.current_block = self.metagraph.block.item()
-                await self.try_run_step(ttl=60 * 60)
+                await self.try_run_step(ttl=2*constants.TTL_RUN_STEP)
                 self.save_state()
                 self.global_step += 1
 

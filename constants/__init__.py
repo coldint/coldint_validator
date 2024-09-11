@@ -56,6 +56,8 @@ TOP_MINER_FRACTION      = 0.1
 
 MAX_SEQUENCE_LEN        = 4096
 MAX_TOKENIZE_FAILS      = 3
+TTL_RUN_STEP            = 7200
+TTL_MODEL_EVAL          = 600
 
 # validator weight moving average term
 weight_alpha = 0.5
