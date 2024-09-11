@@ -16,6 +16,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+import huggingface_hub.constants
+huggingface_hub.constants.HF_HUB_DISABLE_TELEMETRY = True
 # Due to the implementation of disable_progress_bars(), this has to be the first import+call in the application relating to huggingface
 from huggingface_hub.utils import disable_progress_bars
 disable_progress_bars()
