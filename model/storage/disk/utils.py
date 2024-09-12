@@ -4,7 +4,9 @@ import hashlib
 import os
 import shutil
 import sys
+import filelock
 from model.data import ModelId
+from pathlib import Path
 
 
 def get_local_miners_dir(base_dir: str) -> str:
@@ -29,6 +31,47 @@ def get_local_model_snapshot_dir(base_dir: str, hotkey: str, model_id: ModelId) 
         "snapshots",
         model_id.commit,
     )
+
+
+def find_lock_pid(file) -> int:
+    # Try to get the pid that holds the lock from /proc/locks.
+    # Assumptions on the format:
+    # - one line per lock
+    # - line contains ...:<inode>
+    # - first integer is <pid>
+    try:
+        inode = os.stat(file).st_ino
+        with open('/proc/locks','r') as f:
+            for line in f:
+                pid = None
+                hit = False
+                parts = line.strip().split(' ')
+                for p in parts:
+                    if pid is None and re.match('[0-9]+$',p):
+                        pid = int(p)
+                    if re.match(f'.*:{inode}$',p):
+                        hit = True
+                if hit:
+                    return pid
+    except:
+        pass
+    return None
+
+
+def scan_locks(path: str) -> bool:
+    locks_dir = Path(path) / '.locks'
+    for f in locks_dir.glob('**/*'):
+        if not f.is_file():
+            continue
+        fl = filelock.FileLock(f)
+        try:
+            fl.acquire(blocking=False)
+            fl.release()
+        except filelock.Timeout:
+            # oddly, acquiring a lock non-blocking gives a timeout exception...
+            pid = find_lock_pid(f)
+            return True,f,pid
+    return False,None,None
 
 
 def get_hf_download_path(local_path: str, model_id: ModelId) -> str:
