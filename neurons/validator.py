@@ -57,7 +57,6 @@ import dataset
 import validation
 from model import model_utils, competitions
 from model.data import ModelId, ModelMetadata
-from model.model_tracker import ModelTracker
 from model.model_updater import ModelUpdater
 from model.storage.disk.disk_model_store import DiskModelStore
 from model.storage.hugging_face.hugging_face_model_store import HuggingFaceModelStore
@@ -76,6 +75,12 @@ from utilities.mathutils import *
 
 TRANSFORMERS_VERSION_MIN     = "4.41.2"
 TRANSFORMERS_VERSION_OPTIMAL = "4.44.0"
+
+PRIO_POOL       = 100
+PRIO_TOP_MODEL  = 80
+PRIO_INJECT     = 60
+PRIO_NEW_MODEL  = 40
+PRIO_REVISIT    = 20
 
 os.environ["TOKENIZERS_PARALLELISM"] = "true"
 
@@ -101,6 +106,9 @@ class Validator:
         self.hall_of_fame = {}
         self.competitions = {}
 
+        # Last known hotkey metadata
+        self.hk_metadata = {}
+
         # Competition state, only used by evaluation thread
         self.cstate = {}
 
@@ -119,16 +127,19 @@ class Validator:
             if 'version' in state and state['version'] == constants.__spec_version__:
                 self.hall_of_fame = state.pop("hall_of_fame", {})
                 self.competitions = state.pop("competitions", {})
-                tracker_state = state.pop("tracker", {})
+                self.hk_metadata  = state.pop("hk_metadata", {})
+                self.hk_metadata = {hotkey: ModelMetadata(**info) for hotkey, info in self.hk_metadata.items()}
                 self.cstate = state.pop('cstate', {})
+                for cname, cinfo in self.cstate.items():
+                    cinfo['uids_pending'] = {int(uid): prio for uid, prio in cinfo.get('uids_pending', {}).items()}
+                    cinfo['uids_weight'] = {int(uid): w for uid, w in cinfo.get('uids_weight', {}).items()}
                 bt.logging.info("State loaded successfully")
                 self.force_eval_until_uid_last = state.pop("force_eval_until_uid_last", None)
                 self.last_weights_set = state.pop("last_weights_set", time.time())
             else:
                 bt.logging.info("State version incompatible, starting with clean state")
-                tracker_state = {}
 
-        self.model_tracker.set_state(tracker_state)
+        bt.logging.debug(str(self.cstate))
 
     def save_state(self):
         state_dir = self.state_path()
@@ -138,7 +149,7 @@ class Validator:
                 'version': constants.__spec_version__,
                 'competitions': self.competitions,
                 'hall_of_fame': self.hall_of_fame,
-                'tracker': self.model_tracker.get_state(),
+                'hk_metadata': {hotkey: meta.dict() for hotkey, meta in self.hk_metadata.items() if meta is not None},
                 'cstate': self.cstate,
                 'force_eval_until_uid_last': self.force_eval_until_uid_last,
                 'last_weights_set': self.last_weights_set,
@@ -184,9 +195,7 @@ class Validator:
         self.last_epoch = self.metagraph.block.item()
         self.last_weights_set = time.time() # Don't set weights early
 
-        # model_tracker tracks which miner is using which model id.
         self.state_lock = threading.RLock()
-        self.model_tracker = ModelTracker()
 
         # Load or initialize internal state
         self.load_state()
@@ -206,7 +215,6 @@ class Validator:
         self.model_updater = ModelUpdater(
             remote_store=self.remote_store,
             local_store=self.local_store,
-            model_tracker=self.model_tracker,
             comps=self.competitions
         )
 
@@ -256,24 +264,24 @@ class Validator:
                     ret.extend(cinfo['uids_pending'].keys())
         return set(ret)
 
-    def add_uid_to_competition(self, uid, hotkey):
+    def add_or_remove_uid_in_competition(self, uid, hotkey, prio):
         """
-        Add uid to the competition pool which it participates in, delete it from others.
+        Add uid to the competition pool which it participates in, remove it from others.
         """
-        meta = self.model_tracker.get_model_metadata_for_miner_hotkey(hotkey)
-        if meta is None:
-            bt.logging.warning(f"Metadata for {uid}/{hotkey} not available")
+        meta = self.hk_metadata.get(hotkey, None)
         with self.state_lock:
             for cname, cinfo in self.cstate.items():
                 if meta is not None and cname == meta.id.competition:
-                    bt.logging.info(f"Adding {uid} to competition {cname}")
+                    bt.logging.info(f"Adding {uid} to competition {cname} with prio {prio:.02f}")
                     if uid not in cinfo['uids_pool'] and uid not in cinfo['uids_pending']:
-                        cinfo['uids_pending'].append(uid)
+                        cinfo['uids_pending'][uid] = prio
                 else:
                     if uid in cinfo['uids_pool']:
                         cinfo['uids_pool'].remove(uid)
+                        bt.logging.info(f"Removed {uid} from competition {cname} uids_pool")
                     if uid in cinfo['uids_pending']:
-                        cinfo['uids_pending'].remove(uid)
+                        del cinfo['uids_pending'][uid]
+                        bt.logging.info(f"Removed {uid} from competition {cname} uids_pending")
 
     def get_metagraph(self, n_retries=3):
         for i in range(n_retries):
@@ -296,6 +304,63 @@ class Validator:
         bt.logging.error(f"Failed to get metagraph {n_retries} times, giving up")
         return None
 
+    def visit_uids(self, metagraph, metadata, uids, prio=0, retry_interval=0):
+        '''
+        Visit a list/set of uids: download model and update competition pending pools.
+        If retry_interval non-zero, force re-evaluation after this interval.
+
+        Returns the number of uids added
+        '''
+
+        if len(uids) == 0:
+            return 0
+
+        now = time.time()
+        n_picked = 0
+        for uid in uids:
+            if uid >= len(metagraph.hotkeys):
+                continue
+            hotkey = metagraph.hotkeys[uid]
+            hotkey_metadata = metadata.get(hotkey, None)
+            model_prio = prio + random.random()
+
+            if hotkey_metadata is None:
+                self.hk_metadata[hotkey] = None
+                self.add_or_remove_uid_in_competition(uid, hotkey, model_prio)
+                continue
+
+            updated = hotkey_metadata != self.hk_metadata.get(hotkey, None)
+            should_retry = retry_interval != 0 and now - self.uid_last_retried_ts.get(uid,0) >= retry_interval
+            if not updated and not should_retry:
+                continue
+            self.uid_last_retried_ts[uid] = now
+
+            # Sync the model, if necessary.
+            try:
+                bt.logging.trace(f"Sync UID {uid} in PID={os.getpid()}")
+                sync_result = asyncio.run(
+                    self.model_updater.sync_model(hotkey, hotkey_metadata)
+                )
+                bt.logging.trace(f"Sync result: {sync_result}")
+
+                if sync_result in self.model_updater.RETRY_RESULTS:
+                    # By not setting self.hk_metadata[hotkey], we will retry later
+                    pass
+                else:
+                    # Update hk_metadata, so we don't retry next loop
+                    self.hk_metadata[hotkey] = hotkey_metadata
+
+                if sync_result == self.model_updater.SYNC_RESULT_SUCCESS:
+                    self.add_or_remove_uid_in_competition(uid, hotkey, model_prio)
+                    n_picked += 1
+
+            except Exception as e:
+                bt.logging.error(
+                    f"Failed to sync model for UID {uid}: {type(e).__name__} {e} \n {traceback.format_exc()}"
+                )
+
+        return n_picked
+
     def update_chain(self):
         now = time.time()
         if self.last_chain_update is not None and \
@@ -311,28 +376,77 @@ class Validator:
         # alive, and bail out if that is not the case.
         new_metagraph = self.get_metagraph()
         if new_metagraph is None:
-            return False
-
+            bt.logging.warning(f'Failed to update metagraph')
+            return
         with self.metagraph_lock:
             self.metagraph = copy.deepcopy(new_metagraph)
-            self.model_tracker.on_hotkeys_updated(set(self.metagraph.hotkeys))
 
         self.last_chain_update = now
+        bt.logging.info(f"Synced metagraph with {len(self.metagraph.neurons)} neurons, last_chain_update = {now}")
 
-        bt.logging.warning(f"Synced metagraph with {len(self.metagraph.neurons)} neurons")
+        # Fetch miner metadata
+        new_metadata = {}
+        for miner_uid, hotkey in enumerate(new_metagraph.hotkeys):
+            try:
+                mdl_metadata = btlite.get_metadata(
+                    subtensor=self.subtensor,
+                    netuid=self.config.netuid,
+                    hotkey=hotkey,
+                    reconnect=True,
+                )
+                if mdl_metadata is not None:
+                    mdl_metadata = ModelMetadata.parse_chain_data(mdl_metadata)
+                    new_metadata[hotkey] = mdl_metadata
+                updated = new_metadata.get(hotkey, None) != self.hk_metadata.get(hotkey, None)
+                bt.logging.debug(f"Metadata UID {miner_uid}/{hotkey}, updated={updated}, commitment: {mdl_metadata.id.format_label() if mdl_metadata else '---'}")
+            except Exception as e:
+                bt.logging.error(
+                    f"Failed to fetch metadata for UID {miner_uid}: {type(e).__name__} {e} \n {traceback.format_exc()}"
+                )
+                if hotkey in self.hk_metadata:
+                    bt.logging.debug(f"Using old metadata after update failure for {hotkey}")
+                    new_metadata[hotkey] = self.hk_metadata[hotkey]
+
+        bt.logging.info(f"Synced metadata; {len(new_metadata)} commitments")
+
+        # 3-step strategy:
+        # 1. Pick top miners every TOP_MODEL_RETRY_INTERVAL
+        # 2. Pick new models
+        # 3. Revisit old models every GEN_MODEL_RETRY_INTERVAL, slice based on timestamp
+        active_uids = self.get_all_active_uids()
+
+        # Make sure pool UIDs have metadata set
+        for uid in active_uids:
+            if uid >= len(new_metagraph.hotkeys):
+                continue
+            hotkey = new_metagraph.hotkeys[uid]
+            hotkey_metadata = new_metadata.get(hotkey, None)
+            self.hk_metadata[hotkey] = hotkey_metadata
 
         # Determine top miners according to other valis
         top_miner_uids = set(utils.list_top_miners(new_metagraph))
-        bt.logging.info(f"Top miners: {top_miner_uids}")
-        top_uids = top_miner_uids - self.get_all_active_uids()
+        new_top_uids = top_miner_uids - active_uids
+        bt.logging.debug(f"Visiting top UIDs: {new_top_uids}")
+        n_top_updated = self.visit_uids(
+                new_metagraph,
+                new_metadata,
+                new_top_uids,
+                prio=PRIO_TOP_MODEL,
+                retry_interval=constants.TOP_MODEL_RETRY_INTERVAL,
+        )
 
-        # Determine for which top uids to force retry
-        now = time.time()
-        top_uids_to_eval = []
-        for uid in top_uids:
-            if now - self.uid_last_retried_ts.get(uid,0) > constants.TOP_MODEL_RETRY_INTERVAL:
-                top_uids_to_eval.append(uid)
-                self.uid_last_retried_ts[uid] = now
+        n_uids = len(new_metagraph.hotkeys)
+        start_uid = random.randint(0, max(0,n_uids-1))  # Pick random UID to start from
+        all_uids = np.roll(np.arange(0, n_uids), start_uid).tolist()
+
+        non_active_uids = set(all_uids) - active_uids - new_top_uids
+        bt.logging.debug(f"Visiting UIDs for new models")
+        n_new_models = self.visit_uids(
+                new_metagraph,
+                new_metadata,
+                non_active_uids,
+                prio=PRIO_NEW_MODEL,
+        )
 
         # We need all models te be re-evaluated periodically, to make sure they
         # can win on changing competition parameters or advantage factors.
@@ -341,77 +455,27 @@ class Validator:
         # few extra models at a time, the weight setting interval is kept low
         # (previously there was a "test all models" event which took way longer
         # than a regular eval loop).
-        now = int(time.time())
         interval = constants.GEN_MODEL_RETRY_INTERVAL
-        force_eval_frac = float(now%interval)/interval
+        force_eval_frac = float(int(now)%interval)/interval
         force_eval_until_uid = int(force_eval_frac*constants.SUBNET_N_UIDS)
         if self.force_eval_until_uid_last is None:
             # note regarding negative modulo in python: -1%10==9
             self.force_eval_until_uid_last = (force_eval_until_uid-constants.MODEL_RETRY_MAX_N_PER_LOOP)%constants.SUBNET_N_UIDS
-        n_forced_periodic = 0
-        n_unforced_updated = 0
+        bt.logging.info(f"Forcing re-evaluation of models with {self.force_eval_until_uid_last} <= UID < {force_eval_until_uid}")
 
-        bt.logging.info(f"Forcing re-evaluation of models with {self.force_eval_until_uid_last} < UID <= {force_eval_until_uid}")
-
-        # Retrieve chain metadata, download new/forced models
-        start_uid = random.randint(0, max(0,len(new_metagraph.hotkeys)-1))   # Pick random UID to start from
-        cur_uid = start_uid
-        while True:
-            self.update_thread_ts = time.time()
-            hotkey = new_metagraph.hotkeys[cur_uid]
-
-            # Sync the model, if necessary.
-            try:
-                # check if the uid is in the range of models to force
-                force_periodic = False
-                if n_forced_periodic >= constants.MODEL_RETRY_MAX_N_PER_LOOP:
-                    # Already added enough models to force-retry.
-                    # The risk of systematically skipping certain UIDs is small, as
-                    # the range to include depends on current time, and validator
-                    # loops run freely.
-                    pass
-                elif self.force_eval_until_uid_last <= force_eval_until_uid:
-                    if self.force_eval_until_uid_last < cur_uid <= force_eval_until_uid:
-                        force_periodic = True
-                else:
-                    if cur_uid > self.force_eval_until_uid_last or cur_uid <= force_eval_until_uid:
-                        force_periodic = True
-
-                force = cur_uid in top_uids_to_eval or force_periodic
-
-                if not force and n_unforced_updated >= constants.MODEL_UNFORCED_N_PER_LOOP:
-                    bt.logging.debug(f"Skipped UID {cur_uid}/{hotkey}, already {n_unforced_updated} unforced model updates")
-                else:
-                    metadata = btlite.get_metadata(
-                        subtensor=self.subtensor,
-                        netuid=self.config.netuid,
-                        hotkey=hotkey,
-                        reconnect=True,
-                    )
-                    if metadata is not None:
-                        metadata = ModelMetadata.parse_chain_data(metadata)
-
-                    updated = asyncio.run(
-                        self.model_updater.sync_model(hotkey, metadata, force=force)
-                    )
-                    remark = ''
-                    if updated:
-                        self.add_uid_to_competition(cur_uid, hotkey)
-                        if not force:
-                            n_unforced_updated += 1
-                        if force_periodic:
-                            n_forced_periodic += 1
-                            remark = ' (included for periodic evaluation)'
-                    bt.logging.debug(f"Visited UID {cur_uid}/{hotkey}, updated={updated}, commitment: {metadata.id.format_label() if metadata else '---'}{remark}")
-            except Exception as e:
-                bt.logging.error(
-                    f"Failed to sync model for UID {cur_uid}: {type(e).__name__} {e} \n {traceback.format_exc()}"
-                )
-
-            cur_uid = (cur_uid + 1) % len(new_metagraph.hotkeys)
-            if cur_uid == start_uid:
-                break
-
+        if self.force_eval_until_uid_last < force_eval_until_uid:
+            revisit_uids = np.arange(self.force_eval_until_uid_last, force_eval_until_uid).tolist()
+        else:
+            revisit_uids = ( np.arange(self.force_eval_until_uid_last, constants.SUBNET_N_UIDS).tolist() +
+                            np.arange(0, force_eval_until_uid).tolist() )
+        bt.logging.debug(f"Revisiting UIDs: {revisit_uids}")
+        n_revisit_models = self.visit_uids(
+                new_metagraph,
+                new_metadata,
+                revisit_uids,
+                prio=PRIO_REVISIT,
+                retry_interval=constants.GEN_MODEL_RETRY_INTERVAL//2,
+        )
         self.force_eval_until_uid_last = force_eval_until_uid
 
     def update_dynamic_config(self):
@@ -501,12 +565,9 @@ class Validator:
         bt.logging.info(f"Starting model cleanup, deleting at least {state['gb_to_delete']} GB; {state['usage_str']}")
 
         # Get a mapping of all hotkeys to model ids.
-        hotkey_to_model_metadata = (
-            self.model_tracker.get_miner_hotkey_to_model_metadata_dict()
-        )
         hotkey_to_model_id = {
             hotkey: metadata.id
-            for hotkey, metadata in hotkey_to_model_metadata.items()
+            for hotkey, metadata in self.hk_metadata.items() if metadata is not None
         }
 
         # Find all hotkeys that are currently being evaluated or pending eval.
@@ -535,10 +596,15 @@ class Validator:
     async def try_set_weights(self, ttl: int):
         """Sets the weights on the chain with ttl, without raising exceptions if it times out."""
         if self.last_weights_set is not None and time.time() - self.last_weights_set < constants.WEIGHT_SET_MIN_INTERVAL:
+            bt.logging.debug(f'Not setting weights; {time.time()} - {self.last_weights_set} < {constants.WEIGHT_SET_MIN_INTERVAL}')
             return
 
-        # Prepare and log weights
         self.weights.nan_to_num(0.0)
+        weight_sum = self.weights.sum().item()
+        if weight_sum < 1e-5:
+            bt.logging.warning(f'Weights all zero, not setting')
+            return
+
         ws, ui = self.weights.topk(len(self.weights))
         table = Table(title="All non-zero weights")
         table.add_column("uid", justify="right", style="cyan", no_wrap=True)
@@ -557,7 +623,7 @@ class Validator:
             return
 
         try:
-            bt.logging.warning(f"Setting weights.")
+            bt.logging.info(f"Setting weights.")
             call = btlite.set_weights_retry(
                 subtensor=st,
                 hotkey=self.wallet.hotkey,
@@ -570,7 +636,7 @@ class Validator:
             ret,msg = await asyncio.wait_for(call, ttl)
             if ret:
                 self.last_weights_set = time.time()
-                bt.logging.warning(f"Finished setting weights at {self.last_weights_set}.")
+                bt.logging.info(f"Finished setting weights at {self.last_weights_set}.")
             else:
                 bt.logging.warning(f"Failed to set weights: {msg}")
         except asyncio.TimeoutError:
@@ -585,7 +651,7 @@ class Validator:
             bt.logging.trace(f"Running step with ttl {ttl}.")
             t0 = time.time()
             await asyncio.wait_for(self.run_step(), ttl)
-            bt.logging.trace("Finished running step in {time.time()-t0:.1f}s.")
+            bt.logging.trace(f"Finished running step in {time.time()-t0:.1f}s.")
         except asyncio.TimeoutError:
             bt.logging.error(f"Failed to run step after {ttl} seconds")
 
@@ -712,17 +778,35 @@ class Validator:
         Run step for one of the competitions
         Return number of uids evaluated
         """
+
+        cinfo = self.competitions[cname]
+        pool_size = cinfo.get('pool_size', constants.DEFAULT_POOL_SIZE)
+        pend_size = cinfo.get('pend_size', constants.DEFAULT_PEND_SIZE)
+
         with self.state_lock:
             # Initialize competition state
             if cname not in self.cstate:
                 self.cstate[cname] = dict(
                     uids_pool=[],
-                    uids_pending=[],
+                    uids_pending={},
                 )
             cstate = self.cstate[cname]
-            cstate['uids_pool'] = list(set(cstate['uids_pool']) | set(cstate['uids_pending']))
-            cstate['uids_pending'] = []
-            uids_pool = cstate['uids_pool']
+
+            # Select at most pool_size + pend_size uids, sorted on priority number
+            pend = cstate['uids_pending']
+            cur_pool = cstate['uids_pool']
+            bt.logging.debug(f"Competition {cname} pool: {cur_pool}, pending: {pend}")
+            pend.update({uid: PRIO_POOL for uid in cur_pool})
+            pend = [(prio, uid) for uid, prio in pend.items()]
+            pend.sort(reverse=True)
+            uids_pool = [uid for (prio, uid) in pend[:pool_size+pend_size]]
+            picked = set(uids_pool) - set(cur_pool)
+            if len(picked):
+                bt.logging.debug(f"Picked: {picked}")
+
+            # Update pool/pending state
+            cstate['uids_pending'] = {}
+            cstate['uids_pool'] = uids_pool
 
         if len(uids_pool) == 0:
             with self.state_lock:
@@ -732,7 +816,6 @@ class Validator:
 
         bt.logging.debug(f"Evaluating competition {cname} with uids {uids_pool} on {len(dataloader.buffer)} samples")
 
-        cinfo = self.competitions[cname]
 
         # Competition-wide tokenizer
         n_batches = len(dataloader.buffer)
@@ -760,7 +843,7 @@ class Validator:
         n_evaluated = 0
         for uid in uids_pool:
             if ts_expire is not None and time.time() > ts_expire:
-                bt.logging.warning("Model eval loop taking too long, interrupting")
+                bt.logging.warning("Model eval loop taking too long, stopping loop")
                 break
 
             bt.logging.trace(f"Computing model losses for uid {uid}.")
@@ -874,10 +957,30 @@ class Validator:
         model_weights = {uid: weight for uid, weight in zip(uids_pool, model_weights)}
 
         # Sort models by weight / win_rate, keep pool_size entries
-        pool_size = cinfo.get('pool_size', constants.DEFAULT_POOL_SIZE)
-        win_rate_indices = win_rate.argsort()[-pool_size:]
-        new_uids_pool = [uids_pool[i] for i in win_rate_indices]
-        bt.logging.warning(f'selected {pool_size} winning models: {new_uids_pool}')
+        win_rate_indices = win_rate.argsort()
+        sorted_uids = [uids_pool[i] for i in win_rate_indices]
+        new_uids_pool = sorted_uids[-pool_size:]
+        bt.logging.info(f'selected {pool_size} winning models: {new_uids_pool}')
+
+        dropped_uids = sorted_uids[:-pool_size]
+        if len(dropped_uids):
+            bt.logging.info(f'Dropping uids {dropped_uids} from pool')
+        for uid in dropped_uids:
+            if uid in self.benchmark_cfg:
+                continue
+            hk = self.get_uid_hotkey(uid)
+            metadata = self.get_uid_metadata(uid)
+            if hk is None or metadata is None:
+                continue
+            if metadata.id is None:
+                continue
+            state = disk_utils.storage_state(
+                base_dir=self.local_store.base_dir,
+                config=self.config
+            )
+            if state['gb_space_left'] == 0:
+                bt.logging.debug(f"deleting model for UID {uid}; {state['usage_str']}")
+                self.local_store.delete_model(hk, metadata.id)
 
         # Update state: weights and which uids to keep for next run
         with self.state_lock:
@@ -886,7 +989,6 @@ class Validator:
 
         win_matrix = win_info.get('matrix', None)
         if win_matrix is not None:
-            bt.logging.info(f"Competition {cname} result:")
             self.print_win_matrix(win_info['matrix'], uid_to_label, competition=cname)
 
         # Update step log
@@ -916,10 +1018,18 @@ class Validator:
 
         return n_evaluated
 
+    def get_uid_hotkey(self, uid):
+        with self.metagraph_lock:
+            if uid < len(self.metagraph.hotkeys):
+                return self.metagraph.hotkeys[uid]
+            else:
+                return None
+
     def get_uid_metadata(self, uid):
-        metadata = Container()
+        metadata = None
         if uid in self.benchmark_cfg:
             # Model data from dynamic config
+            metadata = Container()
             bcfg = self.benchmark_cfg[uid]
             metadata.hotkey = bcfg.get("hotkey", "xxx")
             metadata.block = bcfg.get("block", 1<<31)
@@ -927,13 +1037,14 @@ class Validator:
             metadata.id = ModelId.dummy(bcfg.get('label', os.path.split(metadata.path)[-1]))
         elif uid < len(self.metagraph.hotkeys):
             # Model from chain
-            metadata.hotkey = self.metagraph.hotkeys[uid]
-            chain_data = self.model_tracker.get_model_metadata_for_miner_hotkey(metadata.hotkey)
-            metadata.id = chain_data.id
-            metadata.block = chain_data.block
-            metadata.path = None
-        else:
-            metadata = None
+            hotkey = self.get_uid_hotkey(uid)
+            chain_data = self.hk_metadata.get(hotkey, None)
+            if chain_data is not None:
+                metadata = Container()
+                metadata.hotkey = hotkey
+                metadata.id = chain_data.id
+                metadata.block = chain_data.block
+                metadata.path = None
         return metadata
 
     def inject_models(self):
@@ -946,7 +1057,8 @@ class Validator:
                     continue
                 ci = self.cstate[competition]
                 if uid not in ci['uids_pool'] and uid not in ci['uids_pending']:
-                    ci['uids_pending'].append(uid)
+                    bt.logging.info(f"Injecting model {uid} into competition '{competition}'")
+                    ci['uids_pending'][uid] = PRIO_INJECT
 
     def print_win_matrix(self, matrix, uid_to_label={}, show_delta_loss=False, competition='?'):
         if show_delta_loss:
