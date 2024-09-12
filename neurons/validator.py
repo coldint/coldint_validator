@@ -277,12 +277,14 @@ class Validator:
     def get_metagraph(self, n_retries=3):
         for i in range(n_retries):
             try:
+                bt.logging.debug(f'getting metagraph from {self.subtensor} for {self.config.netuid}')
                 metagraph = btlite.get_metagraph(
                     subtensor=self.subtensor,
                     netuid=self.config.netuid,
                     lite=False,
                     reconnect=False, # in case of connection issues, we re-create the subtensor
                 )
+                bt.logging.debug(f'got metagraph from {self.subtensor}: {metagraph}')
                 if metagraph is not None:
                     return metagraph
             except Exception as e:
