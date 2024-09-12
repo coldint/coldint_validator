@@ -3,6 +3,7 @@ from enum import IntEnum
 from typing import Any, ClassVar, Dict, Optional, Type
 from transformers import PreTrainedModel
 from pydantic import BaseModel, Field, PositiveInt
+import bittensor as bt
 
 # The maximum bytes for metadata on the chain.
 MAX_METADATA_BYTES = 128
