@@ -247,12 +247,13 @@ class Validator:
 
         bt.logging.debug(f"Started a new wandb run: {name}")
 
-    def get_all_active_uids(self):
+    def get_all_active_uids(self, include_pending=True):
         ret = []
         with self.state_lock:
             for cname, cinfo in self.cstate.items():
                 ret.extend(cinfo['uids_pool'])
-                ret.extend(cinfo['uids_pending'])
+                if include_pending:
+                    ret.extend(cinfo['uids_pending'].keys())
         return set(ret)
 
     def add_uid_to_competition(self, uid, hotkey):
