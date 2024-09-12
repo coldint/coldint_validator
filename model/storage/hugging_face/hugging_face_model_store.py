@@ -5,6 +5,7 @@ from huggingface_hub import HfApi
 from model.data import Model, ModelId
 from model.storage.disk import utils
 from transformers import AutoModelForCausalLM, AutoTokenizer
+import bittensor as bt
 
 from model.storage.remote_model_store import RemoteModelStore
 import constants
@@ -84,16 +85,21 @@ class HuggingFaceModelStore(RemoteModelStore):
         except:
             pass
 
+        has_lock,lockfile,pid_lock = utils.scan_locks(local_path)
+        if has_lock:
+            raise Exception(f'active lock @{lockfile}, pid {pid_lock}')
+
+        # Get the directory the model is stored in.
+        model_dir = utils.get_hf_download_path(local_path, model_id)
+
         # Transformers library can pick up a model based on the hugging face path (username/model) + rev.
+        bt.logging.debug(f"Downloading {repo_id} to {model_dir} in PID={os.getpid()}")
         model = AutoModelForCausalLM.from_pretrained(
             pretrained_model_name_or_path=repo_id,
             revision=model_id.commit,
             cache_dir=local_path,
             use_safetensors=True,
         )
-
-        # Get the directory the model was stored to.
-        model_dir = utils.get_hf_download_path(local_path, model_id)
 
         # Realize all symlinks in that directory since Transformers library does not support avoiding symlinks.
         utils.realize_symlinks_in_directory(model_dir)
