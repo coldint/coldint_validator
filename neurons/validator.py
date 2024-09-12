@@ -489,30 +489,13 @@ class Validator:
         if not base_dir.exists():
             # Nothing to clean
             return
-        size_limit = self.config.model_store_size_gb
-        disk_used = sum(f.stat().st_size for f in base_dir.glob('**/*') if f.is_file())
-        gb_in_use = 1+(disk_used//1e9)
-        statvfs = os.statvfs(base_dir)
-        gb_total = int(statvfs.f_frsize*statvfs.f_blocks//1e9)
-        gb_free = statvfs.f_bsize*statvfs.f_bavail//1e9
 
-        if size_limit>0:
-            use_str = f"{gb_in_use} of {gb_total} GB in use, limit is {size_limit} GB"
-            if gb_in_use < size_limit:
-                bt.logging.trace(f"Skipping cleanup of stale models; {use_str}")
-                return
-            bt.logging.trace(f"Starting cleanup of stale models; {use_str}")
-            gb_to_delete = size_limit - gb_in_use
-        else:
-            min_free = -size_limit
-            use_str = f"{gb_in_use} of {gb_total} GB in use, {gb_free} GB free, minimum required is {min_free} GB free"
-            if gb_free > min_free:
-                bt.logging.trace(f"Skipping cleanup of stale models; {use_str}")
-                return
-            bt.logging.trace(f"Starting cleanup of stale models; {use_str}")
-            gb_to_delete = min_free - gb_free
+        state = disk_utils.storage_state(base_dir=base_dir,config=self.config)
+        if state['gb_to_delete'] == 0:
+            bt.logging.info(f"Skipping cleanup of stale models; {state['usage_str']}")
+            return
 
-        bt.logging.trace(f"attempting to delete at least {gb_to_delete} GB")
+        bt.logging.info(f"Starting model cleanup, deleting at least {state['gb_to_delete']} GB; {state['usage_str']}")
 
         # Get a mapping of all hotkeys to model ids.
         hotkey_to_model_metadata = (
@@ -543,7 +526,7 @@ class Validator:
         self.local_store.delete_unreferenced_models(
             valid_models_by_hotkey=evaluated_hotkeys_to_model_id,
             grace_period_seconds=300,
-            gb_to_delete=gb_to_delete,
+            gb_to_delete=state['gb_to_delete'],
         )
 
     async def try_set_weights(self, ttl: int):
