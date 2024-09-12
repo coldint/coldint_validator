@@ -8,6 +8,7 @@ import traceback
 from typing import Any, List, Optional, Tuple
 import bittensor as bt
 import constants
+import signal
 
 # Needed to get proper logging between child and parent process
 from bittensor.btlogging.defines import BITTENSOR_LOGGER_NAME
@@ -108,6 +109,15 @@ def run_in_subprocess(func: functools.partial, ttl: int, mode="fork", expected_e
     Returns:
         Any: The value returned by 'func'
     """
+    def _terminate_process(signum, frame):
+        if process.is_alive():
+            process.terminate()
+            process.join()
+            bt.logging.error(f"Process terminated due to signal {signum}")
+        if listener is not None:
+            listener.stop()
+            atexit.unregister(listener.stop)
+            
     ctx = multiprocessing.get_context(mode)
     queue = ctx.Queue()
     # When forking, the log queue survives, but when spawning a process, logging
@@ -129,6 +139,9 @@ def run_in_subprocess(func: functools.partial, ttl: int, mode="fork", expected_e
             bt.logging.warning(f'Non-fatal: failed to implement proper logging for child process: {e}')
     process = ctx.Process(target=_wrapped_func, args=[func, log_queue, queue])
 
+    # Register the SIGINT handler to ensure cleanup
+    signal.signal(signal.SIGINT, _terminate_process)
+    
     process.start()
 
     process.join(timeout=ttl)
