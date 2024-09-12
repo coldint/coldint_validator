@@ -1098,6 +1098,8 @@ class Validator:
 
                 if not self.config.dont_set_weights and not self.config.offline:
                     await self.try_set_weights(ttl=60)
+                else:
+                    bt.logging.warning(f'Not setting weights due to config: {self.config.dont_set_weights} or {self.config.offline}')
                 self.last_epoch = self.metagraph.block.item()
                 self.epoch_step += 1
 
