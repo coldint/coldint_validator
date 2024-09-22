@@ -115,18 +115,19 @@ def _prepare_4d_causal_attention_mask_with_cache_position(
 
 
 class LlamaRMSNorm(nn.Module):
-    def __init__(self, hidden_size, eps=1e-6):
+    def __init__(self, hidden_size, eps=1e-6, divisor=None):
         """
         LlamaRMSNorm is equivalent to T5LayerNorm
         """
         super().__init__()
         self.weight = nn.Parameter(torch.ones(hidden_size))
         self.variance_epsilon = eps
+        self.divisor = hidden_size if divisor is None else divisor
 
     def forward(self, hidden_states):
         input_dtype = hidden_states.dtype
         hidden_states = hidden_states.to(torch.float32)
-        variance = hidden_states.pow(2).mean(-1, keepdim=True)
+        variance = hidden_states.pow(2).sum(-1, keepdim=True)/self.divisor
         hidden_states = hidden_states * torch.rsqrt(variance + self.variance_epsilon)
         return self.weight * hidden_states.to(input_dtype)
 
@@ -695,8 +696,8 @@ class LlamaDecoderLayer(nn.Module):
         self.self_attn = LLAMA_ATTENTION_CLASSES[config._attn_implementation](config=config, layer_idx=layer_idx)
 
         self.mlp = LlamaMLP(config)
-        self.input_layernorm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
-        self.post_attention_layernorm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.input_layernorm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps, divisor=config.norm_divisor)
+        self.post_attention_layernorm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps, divisor=config.norm_divisor)
 
     def forward(
         self,
@@ -907,7 +908,7 @@ class LlamaModel(LlamaPreTrainedModel):
         self.layers = nn.ModuleList(
             [LlamaDecoderLayer(config, layer_idx) for layer_idx in range(config.num_hidden_layers)]
         )
-        self.norm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.norm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps, divisor=config.norm_divisor)
         self.rotary_emb = LlamaRotaryEmbedding(config=config)
         self.gradient_checkpointing = False
 

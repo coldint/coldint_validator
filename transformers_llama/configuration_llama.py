@@ -165,11 +165,13 @@ class LlamaConfig(PretrainedConfig):
         attention_bias=False,
         attention_dropout=0.0,
         mlp_bias=False,
+        norm_divisor=None,
         **kwargs,
     ):
         self.vocab_size = vocab_size
         self.max_position_embeddings = max_position_embeddings
         self.hidden_size = hidden_size
+        self.norm_divisor = norm_divisor
         self.intermediate_size = intermediate_size
         self.num_hidden_layers = num_hidden_layers
         self.num_attention_heads = num_attention_heads
