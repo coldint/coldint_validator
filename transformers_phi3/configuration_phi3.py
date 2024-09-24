@@ -126,6 +126,7 @@ class Phi3Config(PretrainedConfig):
         original_max_position_embeddings=4096,
         initializer_range=0.02,
         rms_norm_eps=1e-5,
+        norm_divisor=None,
         use_cache=True,
         tie_word_embeddings=False,
         rope_theta=10000.0,
@@ -154,6 +155,7 @@ class Phi3Config(PretrainedConfig):
         self.original_max_position_embeddings = original_max_position_embeddings
         self.initializer_range = initializer_range
         self.rms_norm_eps = rms_norm_eps
+        self.norm_divisor = norm_divisor
         self.use_cache = use_cache
         self.rope_theta = rope_theta
         self.rope_scaling = rope_scaling

@@ -116,18 +116,19 @@ def _prepare_4d_causal_attention_mask_with_cache_position(
 
 # Copied from transformers.models.llama.modeling_llama.LlamaRMSNorm with Llama->Phi3
 class Phi3RMSNorm(nn.Module):
-    def __init__(self, hidden_size, eps=1e-6):
+    def __init__(self, hidden_size, eps=1e-6, divisor=None):
         """
         Phi3RMSNorm is equivalent to T5LayerNorm
         """
         super().__init__()
         self.weight = nn.Parameter(torch.ones(hidden_size))
         self.variance_epsilon = eps
+        self.divisor = hidden_size if divisor is None else divisor
 
     def forward(self, hidden_states):
         input_dtype = hidden_states.dtype
         hidden_states = hidden_states.to(torch.float32)
-        variance = hidden_states.pow(2).mean(-1, keepdim=True)
+        variance = hidden_states.pow(2).sum(-1, keepdim=True)/self.divisor
         hidden_states = hidden_states * torch.rsqrt(variance + self.variance_epsilon)
         return self.weight * hidden_states.to(input_dtype)
 
@@ -745,11 +746,11 @@ class Phi3DecoderLayer(nn.Module):
         self.self_attn = PHI3_ATTENTION_CLASSES[config._attn_implementation](config, layer_idx=layer_idx)
 
         self.mlp = Phi3MLP(config)
-        self.input_layernorm = Phi3RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.input_layernorm = Phi3RMSNorm(config.hidden_size, eps=config.rms_norm_eps, divisor=config.norm_divisor)
 
         self.resid_attn_dropout = nn.Dropout(config.resid_pdrop)
         self.resid_mlp_dropout = nn.Dropout(config.resid_pdrop)
-        self.post_attention_layernorm = Phi3RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.post_attention_layernorm = Phi3RMSNorm(config.hidden_size, eps=config.rms_norm_eps, divisor=config.norm_divisor)
 
     def forward(
         self,
@@ -960,7 +961,7 @@ class Phi3Model(Phi3PreTrainedModel):
             [Phi3DecoderLayer(config, layer_idx) for layer_idx in range(config.num_hidden_layers)]
         )
         self._attn_implementation = config._attn_implementation
-        self.norm = Phi3RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.norm = Phi3RMSNorm(config.hidden_size, eps=config.rms_norm_eps, divisor=config.norm_divisor)
 
         self.gradient_checkpointing = False
         # Initialize weights and apply final processing
