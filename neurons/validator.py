@@ -1252,6 +1252,14 @@ def check_and_compute_losses(
     else:
         embed_size = max_token_id
 
+    model_geometry = {
+        'n_parameters':model_i.pt_model.num_parameters(),
+        'n_layers':getattr(model_i.pt_model.config,'num_hidden_layers',0),
+        'embed_size':embed_size,
+        'intermediate_size':getattr(model_i.pt_model.config,'intermediate_size',0),
+        'hidden_size':getattr(model_i.pt_model.config,'hidden_size',0),
+    }
+
     losses = validation.compute_losses(model_i.pt_model,allow_sliced,batches,device)
     losses_pt = [loss_sum / len(batch[0]) if batch is not None else math.inf for loss_sum, batch in zip(losses, batches)]
     sample_lengths = [len(batch[0]) for batch in batches if batch is not None]
@@ -1261,11 +1269,7 @@ def check_and_compute_losses(
         'losses':losses,
         'losses_pt':losses_pt,
         'avg_sample_length':avg_sample_length,
-        'model_geometry':{
-            'n_parameters':model_i.pt_model.num_parameters(),
-            'n_layers':model_i.pt_model.config.num_hidden_layers,
-            'embed_size':embed_size,
-        },
+        'model_geometry':model_geometry,
     }
 
 def assert_cuda():
