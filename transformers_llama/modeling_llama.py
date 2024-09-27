@@ -1185,6 +1185,8 @@ class SlicedLlamaForCausalLMWrapper:
                 else:
                     # resume with hidden states
                     logger.debug(f'evaluating sample {i} in later slice...')
+                    # Put state back on GPU
+                    output_states[i] = output_states[i].to(self.device)
                     outputs = model_slice.model(inputs_embeds=output_states[i])
                     sample_state = outputs.last_hidden_state
             except Exception as e:
@@ -1193,6 +1195,8 @@ class SlicedLlamaForCausalLMWrapper:
             output_states[i] = sample_state
 
             if not is_last_slice:
+                # Store hidden state in system RAM
+                output_states[i] = output_states[i].to('cpu')
                 continue
             if output_states[i] is None:
                 continue
@@ -1211,6 +1215,9 @@ class SlicedLlamaForCausalLMWrapper:
             loss_value = loss.detach().item()
             logger.debug(f'loss: {loss_value}')
             losses[i] = loss_value
+
+            # Release state memory
+            output_states[i] = None
 
         return losses
 
