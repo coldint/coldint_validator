@@ -10,6 +10,7 @@ from model.storage.local_model_store import LocalModelStore
 from model.storage.model_metadata_store import ModelMetadataStore
 from model.storage.remote_model_store import RemoteModelStore
 from transformers import AutoModelForCausalLM
+import torch
 
 class ModelUpdater:
     """Checks if the currently tracked model for a hotkey matches what the miner committed to the chain."""
@@ -71,10 +72,11 @@ class ModelUpdater:
         # Otherwise we need to download the new model based on the metadata.
         if model_available:
             bt.logging.debug(f"Model {metadata.id} already available, not downloading")
-            pt_model = AutoModelForCausalLM.from_pretrained(
-                pretrained_model_name_or_path=snapshot_path,
-                use_safetensors=True,
-            )
+            with torch.device('meta'):
+                pt_model = AutoModelForCausalLM.from_pretrained(
+                    pretrained_model_name_or_path=snapshot_path,
+                    use_safetensors=True,
+                )
         else:
             model_size_limit = cparams.get('model_size', constants.MAX_MODEL_SIZE)
             statvfs = os.statvfs(self.local_store.base_dir)
@@ -87,9 +89,10 @@ class ModelUpdater:
             path = self.local_store.get_path(hotkey)
             bt.logging.debug(f"download_model({metadata.id}) to {path}")
             try:
-                model = await self.remote_store.download_model(
-                    metadata.id, path, model_size_limit
-                )
+                with torch.device('meta'):
+                    model = await self.remote_store.download_model(
+                        metadata.id, path, model_size_limit
+                    )
             except Exception as e:
                 bt.logging.debug(
                     f"Failed to download model for hotkey {hotkey} due to {e}."
