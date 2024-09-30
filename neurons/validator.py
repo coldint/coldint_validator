@@ -729,6 +729,7 @@ class Validator:
     async def run_step(self):
         bt.logging.debug(f'run_step() @ current block {self.current_block}')
         self.inject_models()
+        t0 = time.time()
 
         # Collect uid evaluation data here
         self.step_uid_log = dict()
@@ -770,7 +771,8 @@ class Validator:
 
         # Log to screen and wandb.
         pages_desc = [f'{cfg_name}_{num_rows}_{split}' for cfg_name, num_rows, split in dataloader.pages]
-        self.log_step(pages_desc)
+        step_time = time.time() - t0
+        self.log_step(pages=pages_desc, step_time=step_time)
 
         # Increment the number of completed run steps by 1
         self.run_step_count += 1
@@ -1091,17 +1093,17 @@ class Validator:
         console = Console()
         console.print(table)
 
-    def log_step(self, pages):
+    def log_step(self, **kwargs):
         """Logs the results of the step to the console and wandb (if enabled)."""
         # Build step log
         step_log = {
             "timestamp": time.time(),
             'block': self.current_block,
-            "pages": pages,
             "uids": [int(uid) for uid in self.step_uid_log.keys()],
             "competitions": self.competitions,
             "uid_data": {},
         }
+        step_log.update(kwargs)
         for uid, info in self.step_uid_log.items():
             info['weight'] = self.weights[uid].item()
             step_log['uid_data'][str(uid)] = info
