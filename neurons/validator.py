@@ -1297,4 +1297,12 @@ if __name__ == "__main__":
 
     assert_cuda()
 
+    # Set an output width explicitly for rich table output; on pm2 tables get
+    # squished if we don't.
+    try:
+        width = os.get_terminal_size().columns
+    except:
+        width = 0
+    os.environ['COLUMNS'] = str(max(200,width))
+
     asyncio.run(Validator().run())
