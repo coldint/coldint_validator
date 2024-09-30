@@ -41,6 +41,7 @@ import os
 import orjson
 import math
 import pickle
+import psutil
 import time
 import torch
 import random
@@ -858,7 +859,10 @@ class Validator:
             try:
                 uid_to_block[uid] = metadata.block if metadata.block is not None else 1<<31
                 uid_to_label[uid] = metadata.id.format_label()
-                bt.logging.debug(f"Evaluating uid {uid} ({uid_to_label[uid]}) from block {uid_to_block[uid]}")
+                vminfo = psutil.virtual_memory()
+                cpu_mem_gb_total = vminfo.total>>30
+                cpu_mem_gb_free = vminfo.available>>30
+                bt.logging.debug(f"Evaluating uid {uid} ({uid_to_label[uid]}) from block {uid_to_block[uid]}, {cpu_mem_gb_free}/{cpu_mem_gb_total} Gb free")
                 # Get model tokenizer if no competition-wide tokenizer is set
                 mdl_batches = batches
                 max_token_id = batches_max_token_id
