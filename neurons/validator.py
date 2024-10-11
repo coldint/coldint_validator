@@ -727,6 +727,7 @@ class Validator:
         return {}
 
     async def run_step(self):
+        self.competition_log_info = {}
         bt.logging.debug(f'run_step() @ current block {self.current_block}')
         self.inject_models()
         t0 = time.time()
@@ -835,6 +836,7 @@ class Validator:
             batches_max_token_id = max(
                 [max(b[0]) for b in batches if b is not None]
             )
+            self.competition_log_info[cname] = dict(sample_len=[len(ids[0]) if ids is not None else 0 for ids in batches])
 
 
         # Compute model losses on batches.
@@ -1108,6 +1110,7 @@ class Validator:
             "uids": [int(uid) for uid in self.step_uid_log.keys()],
             "competitions": self.competitions,
             "uid_data": {},
+            "competition_info": self.competition_log_info
         }
         step_log.update(kwargs)
         for uid, info in self.step_uid_log.items():
