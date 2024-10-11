@@ -71,6 +71,7 @@ def compute_wins(
         dictionary: computed dictionaries uid->value
                         wins
                         win_fractions
+                        win_abs_rate
                         advantage_factors
                         matrix {uid_a -> {uid_b -> info}}
     """
@@ -78,6 +79,7 @@ def compute_wins(
     if len(uids_sorted) == 0:
         return {}
     wins = {uid: 0 for uid in uids_sorted}
+    abs_wins = {uid: 0 for uid in uids_sorted}
     losses_per_uid = {uid: np.array(losses) for uid, losses in losses_per_uid.items()}
 
     # Determine advantage factors
@@ -111,7 +113,12 @@ def compute_wins(
                 wins[uid_a] += 1
                 break
 
+        # Determine winner in absolute sense
+        abs_winner = np.argmin(sample_loss)
+        abs_wins[uids_sorted[abs_winner]] += 1
+
     win_fractions = {uid: n_wins / n_samples for uid,n_wins in wins.items()}
+    win_abs_fractions = {uid: n_wins / n_samples for uid,n_wins in abs_wins.items()}
 
     # Wins matrix (informative only)
     matrix = {uid_a:{uid_b:None for uid_b in uids_sorted} for uid_a in uids_sorted}
@@ -122,7 +129,13 @@ def compute_wins(
             'wins_adv': int(np.sum(uid_advantage_factors[uid_a] * losses_per_uid[uid_a] < losses_per_uid[uid_b])),
         }
 
-    return dict(wins=wins, win_rate=win_fractions, advantage_factors=uid_advantage_factors, matrix=matrix)
+    return dict(
+        wins=wins,
+        win_rate=win_fractions,
+        win_abs_rate=win_abs_fractions,
+        advantage_factors=uid_advantage_factors,
+        matrix=matrix,
+    )
 
 
 def compute_losses_sliced(

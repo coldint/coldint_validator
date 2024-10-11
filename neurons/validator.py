@@ -1005,6 +1005,7 @@ class Validator:
         # Update step log
         wins = win_info.get('wins', {})
         win_rate = win_info.get('win_rate', {})
+        win_abs_rate = win_info.get('win_abs_rate', {})
         advantage_factors = win_info.get('advantage_factors', {})
         for uid in uids_pool:
             self.step_uid_log[uid] = {
@@ -1023,6 +1024,7 @@ class Validator:
                 "loss_sum_std": naninf_std(losses_per_uid[uid]),
                 "adv_factor": 100*(1-advantage_factors.get(uid,1)),
                 "win_rate": win_rate.get(uid, 0),
+                "win_abs_rate": win_abs_rate.get(uid, 0),
                 "win_total": wins.get(uid, 0),
                 "win_matrix_row": win_matrix.get(uid, None) if win_matrix else None
             }
@@ -1127,6 +1129,7 @@ class Validator:
         table.add_column("avg_slen", style="magenta")
         table.add_column("adv_factor(%)", style="magenta")
         table.add_column("win_rate", style="magenta")
+        table.add_column("win_abs_rate", style="magenta")
         table.add_column("win_total", style="magenta")
         table.add_column("weights", style="magenta")
         table.add_column("block", style="magenta")
@@ -1140,6 +1143,7 @@ class Validator:
                     f"{d['avg_sample_len']:.01f}",
                     f"{d['adv_factor']:.03f} of {100*constants.advantage_initial:.03f}",
                     str(round(d["win_rate"], 4)),
+                    str(round(d["win_abs_rate"], 4)),
                     str(d["win_total"]),
                     str(round(d['weight'], 4)),
                     str(d["block"]),
