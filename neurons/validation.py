@@ -25,8 +25,31 @@ import constants
 import traceback
 import bittensor as bt
 import numpy as np
+import random
 import itertools
 from utilities.mathutils import *
+
+def group_samples(losses_per_uid, group_size):
+    uids = list(losses_per_uid.keys())
+    loss_mat = np.array([
+        losses_per_uid[uid] for uid in uids
+    ])
+
+    # Zero samples where everyone scored NaN
+    nans = np.isnan(loss_mat) | np.isinf(loss_mat)
+    all_nan = np.sum(nans, axis=0) == loss_mat.shape[0]
+    loss_mat[:, all_nan] = 0
+
+    # Shuffle samples to reduce effect of correlations
+    n_samples = loss_mat.shape[1]
+    n_samples -= n_samples%group_size
+    idxs = np.arange(n_samples)
+    random.shuffle(idxs)
+    loss_mat = loss_mat[:,idxs]
+
+    # Note that a single NaN in the set results in NaN for the group
+    summed = loss_mat.reshape(len(uids),-1,group_size).sum(axis=2)
+    return {uid:np.ascontiguousarray(summed[i]) for i,uid in enumerate(uids)}
 
 def compute_wins(
     losses_per_uid: typing.Dict[int, typing.List[float]],

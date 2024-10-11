@@ -940,6 +940,10 @@ class Validator:
                 if transformers.__version__ != TRANSFORMERS_VERSION_OPTIMAL:
                     bt.logging.error(f'Please run with transformers version {TRANSFORMERS_VERSION_OPTIMAL} (currently running {transformers.__version__}) before reporting issues.')
 
+        group_samples = cinfo.get('group_samples', 1)
+        if group_samples > 1:
+            losses_per_uid = validation.group_samples(losses_per_uid, group_samples)
+
         win_info = validation.compute_wins(
                 losses_per_uid,
                 uid_to_block,
