@@ -106,6 +106,7 @@ class Validator:
         # Updated by model updater thread, used by evaluation thread
         self.hall_of_fame = {}
         self.competitions = {}
+        self.defaults = {}
 
         # Last known hotkey metadata
         self.hk_metadata = {}
@@ -129,6 +130,7 @@ class Validator:
                 # major.minor of version has not changed
                 self.hall_of_fame = state.pop("hall_of_fame", {})
                 self.competitions = state.pop("competitions", {})
+                self.defaults = state.pop("defaults", {})
                 self.hk_metadata  = state.pop("hk_metadata", {})
                 self.hk_metadata = {hotkey: ModelMetadata(**info) for hotkey, info in self.hk_metadata.items()}
                 self.cstate = state.pop('cstate', {})
@@ -150,6 +152,7 @@ class Validator:
             state = {
                 'version': constants.__spec_version__,
                 'competitions': self.competitions,
+                'defaults': self.defaults,
                 'hall_of_fame': self.hall_of_fame,
                 'hk_metadata': {hotkey: meta.dict() for hotkey, meta in self.hk_metadata.items() if meta is not None},
                 'cstate': self.cstate,
@@ -490,17 +493,19 @@ class Validator:
         # Competition info
         url = constants.COMPETITIONS_URL
         comps = None
+        defaults = None
         if self.uid is not None:
             # Check if a dedicated competitions-{uid}.json is available.
             # This is used to allow targeted tweaks e.g. in case of issues with transformer overrides.
             vali_url = url.replace('.json',f'-{self.uid}.json')
-            comps = competitions.load_competitions(vali_url,warn_failure=False)
+            comps,defaults = competitions.load_competitions(vali_url,warn_failure=False)
         if comps is None:
             # Load regular competition info.
-            comps = competitions.load_competitions(url)
+            comps,defaults = competitions.load_competitions(url)
         if comps is not None:
             with self.state_lock:
                 self.competitions = comps
+                self.defaults = defaults
                 self.model_updater.set_competitions(self.competitions)
 
         # Hall of fame

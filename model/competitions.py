@@ -9,11 +9,11 @@ def validate_competitions(d):
     Validate competitions dictionary <d>.
     Add defaults from key default.
     Drop comments starting with "_".
-    return competitions dictionary if valid, None otherwise.
+    return tuple (competitions dictionary,defaults) if valid, (None,None) otherwise.
     '''
     if type(d) is not dict:
         bt.logging.warning("Competitions not a dict")
-        return None
+        return None,None
 
     defaults = d.get('default',{})
 
@@ -26,7 +26,7 @@ def validate_competitions(d):
 
         if type(cinfo) is not dict:
             bt.logging.warning(f"Competition {cname} info not a dict")
-            return None
+            return None,None
 
         add_c = defaults.copy()
         add_c.update(cinfo)
@@ -34,11 +34,11 @@ def validate_competitions(d):
         missing_keys = required_keys - set(add_c.keys())
         if len(missing_keys) > 0:
             bt.logging.warning(f"Competition {cname} missing keys {missing_keys}")
-            return None
+            return None,None
 
         ret[cname] = add_c
 
-    return ret
+    return ret,defaults
 
 def load_competitions(loc,warn_failure=True):
     '''
@@ -58,7 +58,7 @@ def load_competitions(loc,warn_failure=True):
     except Exception as e:
         if warn_failure:
             bt.logging.warning(f"Failed to load competitions: {e}")
-        return None
+        return None,None
 
     return validate_competitions(d)
 
@@ -99,7 +99,7 @@ def model_get_valid_competitions(mdl, competitions):
 if __name__ == "__main__":
     bt.logging.on()
     bt.logging.set_debug(True)
-    c = load_competitions("../../sn29/competitions.json")
+    c,d = load_competitions("../../sn29/competitions.json")
 
     import os
     import sys

@@ -136,7 +136,7 @@ async def main(config: bt.config):
         model = model_utils.load_local_model(config.load_model_dir,dtype=args.dtype)
 
         if args.competition is None or args.check_competition:
-            compts = competitions.load_competitions(constants.COMPETITIONS_URL)
+            compts,defaults = competitions.load_competitions(constants.COMPETITIONS_URL)
         if args.competition is None:
             valid_cs = competitions.model_get_valid_competitions(model, compts)
             if len(valid_cs) != 1:
