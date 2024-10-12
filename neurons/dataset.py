@@ -42,12 +42,13 @@ class SubsetFineWebEdu2Loader(IterableDataset):
         batch_size=None,
         sequence_length=None,
         num_pages=None,
+        num_rows_per_page=100,
         tokenizer: AutoTokenizer=None,
         pack=True,
     ):
         self.batch_size = batch_size
         self.sequence_length = sequence_length
-        self.num_rows_per_page = 100
+        self.num_rows_per_page = num_rows_per_page
         self.tokenizer = tokenizer
         self.pack = pack
 
@@ -89,7 +90,8 @@ class SubsetFineWebEdu2Loader(IterableDataset):
                     response_json = "Invalid JSON"
                 response.raise_for_status()  # This will raise an HTTPError if the HTTP request returned an unsuccessful status code
 
-                for row in response.json()["rows"]:
+                # Note that we enforce the number of rows per page locally.
+                for row in response.json()["rows"][:self.num_rows_per_page]:
                     content = row["row"]["text"]
                     if tokenize:
                         tokenized = self.tokenizer(content, truncation=True)["input_ids"] + [self.tokenizer.eos_token_id]
