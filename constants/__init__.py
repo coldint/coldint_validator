@@ -70,6 +70,7 @@ advantage_decay_per_epoch = 0.995
 
 # validators number of pages to eval over miners on each step.`
 n_eval_pages = 8
+n_rows_per_page = 100
 
 DEFAULT_POOL_SIZE = 6
 DEFAULT_PEND_SIZE = 6

@@ -746,6 +746,7 @@ class Validator:
             dataloader = dataset.SubsetFineWebEdu2Loader(
                 batch_size=1,
                 num_pages=0,
+                num_rows_per_page=self.defaults.get('rows_per_page',constants.n_rows_per_page),
                 tokenizer=None,
                 pack=False
             )
@@ -754,7 +755,7 @@ class Validator:
             await asyncio.sleep(60)
             return
 
-        samples = dataloader.fetch_data_to_rows(constants.n_eval_pages)
+        samples = dataloader.fetch_data_to_rows(self.defaults.get('eval_pages',constants.n_eval_pages))
         if len(samples) == 0:
             bt.logging.warning(f"No samples to eval. Waiting one minute before retrying.")
             await asyncio.sleep(60)
