@@ -844,6 +844,7 @@ class Validator:
             batches = dataloader.tokenize(
                     cinfo['tokenizer'],
                     max_len=cinfo.get('max_sequence_len', constants.MAX_SEQUENCE_LEN),
+                    cap_sample_len=cinfo.get('cap_sample_len', constants.CAP_SAMPLE_LEN),
                     max_invalid=cinfo.get('max_tokenize_fails', constants.MAX_TOKENIZE_FAILS)
             )
             batches_max_token_id = max(
@@ -894,6 +895,7 @@ class Validator:
                         raise ModelIssue(f'No default tokenizer and no model tokenizer available')
                 elif mdl_batches is None or cinfo.get('free_tokenizer',False):
                     max_len = cinfo.get('max_sequence_len', None)
+                    cap_sample_len = cinfo.get('cap_sample_len', 0)
                     if max_len is None:
                         raise ModelIssue(f"Unable to determine max sequence length")
                     try:
@@ -901,6 +903,7 @@ class Validator:
                         new_mdl_batches = dataloader.tokenize(
                                 model_path,
                                 max_len=max_len,
+                                cap_sample_len=cap_sample_len,
                                 max_invalid=cinfo.get('max_tokenize_fails', constants.MAX_TOKENIZE_FAILS)
                         )
                         mdl_batches = new_mdl_batches

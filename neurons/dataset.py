@@ -166,7 +166,7 @@ class SubsetFineWebEdu2Loader(IterableDataset):
             self.fetch_page(page, pack=False, tokenize=False)
         return self.buffer
 
-    def tokenize(self, tokenizer, max_len=0, max_invalid=constants.MAX_TOKENIZE_FAILS):
+    def tokenize(self, tokenizer, max_len=0, cap_sample_len=0, max_invalid=constants.MAX_TOKENIZE_FAILS):
         """
         Return batches, as tokenized using <tokenizer>
         """
@@ -175,8 +175,15 @@ class SubsetFineWebEdu2Loader(IterableDataset):
             tokenizer = AutoTokenizer.from_pretrained(tokenizer)
         batches = []
         n_invalid = 0
+        n_capped = 0
         n_too_long = 0
         for irow, row in enumerate(self.buffer):
+            capped = False
+            if cap_sample_len and len(row)>cap_sample_len:
+                capped = True
+                l = row.rfind(' ',0,cap_sample_len)
+                if l<0: l = cap_sample_len
+                row = row[:l]
             ids = tokenizer(row, truncation=False)["input_ids"]
             repro = tokenizer.decode(ids)
             if repro != row:
@@ -187,9 +194,12 @@ class SubsetFineWebEdu2Loader(IterableDataset):
                     raise ValueError(f"More than {max_invalid} tokenizer failures, disqualifying model")
 
             if ids is not None:
-                ids += [tokenizer.eos_token_id]
+                if capped:
+                    n_capped += 1
+                else:
+                    ids += [tokenizer.eos_token_id]
                 if max_len and len(ids) > max_len:
-                    bt.logging.debug(f"Sample {irow} too long for model ({len(ids)} > {max_len}), forcing +Inf score")
+                    bt.logging.debug(f"Sample {irow} too long for model ({len(ids)} > {max_len}, len(sample)={len(row)}), forcing +Inf score")
                     n_too_long += 1
                     ids = None
                 else:
@@ -197,8 +207,7 @@ class SubsetFineWebEdu2Loader(IterableDataset):
 
             batches.append(ids)
 
-        if n_too_long:
-            bt.logging.info(f"{n_too_long} samples too long (> {max_len}), forced +Inf scores")
+        bt.logging.info(f"Tokenized samples; n_too_long={n_too_long}, n_capped={n_capped}, n_invalid={n_invalid}")
 
         return batches
 
