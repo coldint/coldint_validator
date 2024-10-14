@@ -384,6 +384,7 @@ class Validator:
             bt.logging.warning(f'Failed to update metagraph')
             return
         with self.metagraph_lock:
+            old_metagraph = self.metagraph
             self.metagraph = copy.deepcopy(new_metagraph)
 
         self.last_chain_update = now
@@ -403,6 +404,12 @@ class Validator:
                     mdl_metadata = ModelMetadata.parse_chain_data(mdl_metadata)
                     new_metadata[hotkey] = mdl_metadata
                 updated = new_metadata.get(hotkey, None) != self.hk_metadata.get(hotkey, None)
+                if ( old_metagraph
+                        and miner_uid in self.uid_last_retried_ts
+                        and len(old_metagraph.hotkeys)>miner_uid
+                        and old_metagraph.hotkeys[miner_uid] != hotkey ):
+                    bt.logging.info(f'Hotkey of UID {miner_uid} changed from {old_metagraph.hotkeys[miner_uid]} to {hotkey}; resetting uid_last_retried_ts')
+                    del self.uid_last_retried_ts[miner_uid]
                 bt.logging.debug(f"Metadata UID {miner_uid}/{hotkey}, updated={updated}, commitment: {mdl_metadata.id.format_label() if mdl_metadata else '---'}")
             except Exception as e:
                 bt.logging.error(
