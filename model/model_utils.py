@@ -188,7 +188,7 @@ async def get_repo(
     model_metadata = await metadata_store.retrieve_model_metadata(hotkey)
 
     if not model_metadata:
-        raise ValueError(f"No model metadata found for miner {uid}")
+        raise ValueError(f"No model metadata found for miner UID {uid}")
 
     return utils.get_hf_url(model_metadata)
 
@@ -254,7 +254,7 @@ async def load_remote_model(
     hotkey = metagraph.hotkeys[uid]
     model_metadata = await metadata_store.retrieve_model_metadata(hotkey)
     if not model_metadata:
-        raise ValueError(f"No model metadata found for miner {uid}")
+        raise ValueError(f"No model metadata found for miner UID {uid}")
 
     bt.logging.success(f"Fetched model metadata: {model_metadata}")
     model: Model = await remote_model_store.download_model(

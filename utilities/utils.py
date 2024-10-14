@@ -30,7 +30,7 @@ def assert_registered(wallet: bt.wallet, metagraph: bt.metagraph) -> int:
         )
     uid = metagraph.hotkeys.index(wallet.hotkey.ss58_address)
     bt.logging.success(
-        f"You are registered with address: {wallet.hotkey.ss58_address} and uid: {uid}"
+        f"You are registered with address: {wallet.hotkey.ss58_address} and UID {uid}"
     )
 
     return uid

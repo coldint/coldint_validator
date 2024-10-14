@@ -277,16 +277,16 @@ class Validator:
         with self.state_lock:
             for cname, cinfo in self.cstate.items():
                 if meta is not None and cname == meta.id.competition:
-                    bt.logging.info(f"Adding {uid} to competition {cname} with prio {prio:.02f}")
+                    bt.logging.info(f"Adding UID {uid} to competition {cname} with prio {prio:.02f}")
                     if uid not in cinfo['uids_pool'] and uid not in cinfo['uids_pending']:
                         cinfo['uids_pending'][uid] = prio
                 else:
                     if uid in cinfo['uids_pool']:
                         cinfo['uids_pool'].remove(uid)
-                        bt.logging.info(f"Removed {uid} from competition {cname} uids_pool")
+                        bt.logging.info(f"Removed UID {uid} from competition {cname} uids_pool")
                     if uid in cinfo['uids_pending']:
                         del cinfo['uids_pending'][uid]
-                        bt.logging.info(f"Removed {uid} from competition {cname} uids_pending")
+                        bt.logging.info(f"Removed UID {uid} from competition {cname} uids_pending")
 
     def get_metagraph(self, n_retries=3):
         for i in range(n_retries):
@@ -460,7 +460,7 @@ class Validator:
                 prio=PRIO_NEW_MODEL,
         )
 
-        # We need all models te be re-evaluated periodically, to make sure they
+        # We need all models to be re-evaluated periodically, to make sure they
         # can win on changing competition parameters or advantage factors.
         # This is synchronized between validators by using UTC time, in order
         # to keep their weights in sync as much as possible. By testing only a
@@ -865,13 +865,13 @@ class Validator:
                 bt.logging.warning("Model eval loop taking too long, stopping loop")
                 break
 
-            bt.logging.trace(f"Computing model losses for uid {uid}.")
+            bt.logging.trace(f"Computing model losses for UID {uid}.")
             metadata = self.get_uid_metadata(uid)
 
             losses_per_uid[uid] = [math.inf]*n_batches
             losses_pt_per_uid[uid] = losses_per_uid[uid].copy()
             if metadata is None:
-                bt.logging.debug(f"Unable to load metadata for {uid}. Setting loss to infinity.")
+                bt.logging.debug(f"Unable to load metadata for UID {uid}. Setting loss to infinity.")
                 continue
             try:
                 uid_to_block[uid] = metadata.block if metadata.block is not None else 1<<31
@@ -879,7 +879,7 @@ class Validator:
                 vminfo = psutil.virtual_memory()
                 cpu_mem_gb_total = vminfo.total>>30
                 cpu_mem_gb_free = vminfo.available>>30
-                bt.logging.debug(f"Evaluating uid {uid} ({uid_to_label[uid]}) from block {uid_to_block[uid]}, {cpu_mem_gb_free}/{cpu_mem_gb_total} Gb free")
+                bt.logging.debug(f"Evaluating UID {uid} ({uid_to_label[uid]}) from block {uid_to_block[uid]}, {cpu_mem_gb_free}/{cpu_mem_gb_total} Gb free")
                 # Get model tokenizer if no competition-wide tokenizer is set
                 mdl_batches = batches
                 max_token_id = batches_max_token_id
@@ -942,15 +942,15 @@ class Validator:
                 losses_pt_per_uid[uid] = losses_pt
                 avg_sample_len_per_uid[uid] = eval_results['avg_sample_length']
                 model_geometry_per_uid[uid] = eval_results['model_geometry']
-                bt.logging.debug(f"Losses for uid:{uid}, per token: {naninf_mean(losses_pt):.03f} +- {naninf_std(losses_pt):.03f}, sum {naninf_mean(losses):.01f} +- {naninf_std(losses):.01f}, avg sample len: {eval_results['avg_sample_length']:.01f}")
+                bt.logging.debug(f"Losses for UID {uid}, per token: {naninf_mean(losses_pt):.03f} +- {naninf_std(losses_pt):.03f}, sum {naninf_mean(losses):.01f} +- {naninf_std(losses):.01f}, avg sample len: {eval_results['avg_sample_length']:.01f}")
 
             except ModelIssue as e:
                 bt.logging.info(
-                    f'Model issue for uid {uid}, disqualifying: {e}'
+                    f'Model issue for UID {uid}, disqualifying: {e}'
                 )
             except Exception as e:
                 bt.logging.error(
-                    f"Error in eval loop: {e}. Setting losses for uid: {uid} to infinity.\n{traceback.format_exc()}"
+                    f"Error in eval loop: {e}. Setting losses for UID {uid} to infinity.\n{traceback.format_exc()}"
                 )
                 if transformers.__version__ != TRANSFORMERS_VERSION_OPTIMAL:
                     bt.logging.error(f'Please run with transformers version {TRANSFORMERS_VERSION_OPTIMAL} (currently running {transformers.__version__}) before reporting issues.')
@@ -1081,11 +1081,11 @@ class Validator:
             for uid, binfo in self.benchmark_cfg.items():
                 competition = binfo.get('competition', '')
                 if competition not in self.cstate:
-                    bt.logging.info(f"Injected model {uid} competition '{competition}' unknown")
+                    bt.logging.info(f"Injected model UID {uid} competition '{competition}' unknown")
                     continue
                 ci = self.cstate[competition]
                 if uid not in ci['uids_pool'] and uid not in ci['uids_pending']:
-                    bt.logging.info(f"Injecting model {uid} into competition '{competition}'")
+                    bt.logging.info(f"Injecting model UID {uid} into competition '{competition}'")
                     ci['uids_pending'][uid] = PRIO_INJECT
 
     def print_win_matrix(self, matrix, uid_to_label={}, show_delta_loss=False, competition='?'):
