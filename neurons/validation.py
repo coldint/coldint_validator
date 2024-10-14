@@ -102,13 +102,23 @@ def compute_wins(
         sample_loss = [losses_per_uid[uid][sample_idx] for uid in uids_sorted]
 
         for i_uid_a, uid_a in enumerate(uids_sorted):
-            # uid_a should win from all other models using its advantage factor
-            uid_a_loss = sample_loss[i_uid_a] * uid_advantage_factors[uid_a]
+            uid_a_loss = sample_loss[i_uid_a]
+            uid_a_loss_adv = uid_a_loss * uid_advantage_factors[uid_a]
             won_all = True
-            for i_uid_b in range(i_uid_a+1,len(uids_sorted)):
-                if uid_a_loss > sample_loss[i_uid_b]:
-                    won_all = False
-                    break
+            for i_uid_b in range(len(uids_sorted)):
+                if i_uid_a == i_uid_b:
+                    pass
+                uid_b_loss = sample_loss[i_uid_b]
+                if i_uid_b < i_uid_a:
+                    # uid_a should win from all *older* models in absolute sense
+                    if uid_a_loss >= uid_b_loss:
+                        won_all = False
+                        break
+                elif i_uid_b > i_uid_a:
+                    # uid_a should win from all *newer* models using its advantage factor
+                    if uid_a_loss_adv > uid_b_loss:
+                        won_all = False
+                        break
             if won_all and not np.isnan(uid_a_loss) and not np.isinf(uid_a_loss):
                 wins[uid_a] += 1
                 break
