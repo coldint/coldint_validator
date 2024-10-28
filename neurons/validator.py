@@ -1294,7 +1294,10 @@ def check_and_compute_losses(
         'hidden_size':getattr(model_i.pt_model.config,'hidden_size',0),
     }
 
-    losses = validation.compute_losses(model_i.pt_model,allow_sliced,batches,device)
+    if device == 'random':
+        losses = [(rnd+0.5) * len(batch[0]) if batch is not None else math.inf for rnd, batch in zip(np.random.rand(len(batches)), batches)]
+    else:
+        losses = validation.compute_losses(model_i.pt_model,allow_sliced,batches,device)
     losses_pt = [loss_sum / len(batch[0]) if batch is not None else math.inf for loss_sum, batch in zip(losses, batches)]
     sample_lengths = [len(batch[0]) for batch in batches if batch is not None]
     avg_sample_length = 0 if len(sample_lengths) == 0 else np.mean(sample_lengths)
