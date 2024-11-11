@@ -1164,16 +1164,26 @@ class Validator:
             # Model from chain
             hotkey = self.get_uid_hotkey(uid)
             chain_data = self.hk_metadata.get(hotkey, None)
-            if chain_data is not None:
-                metadata = Container()
-                metadata.hotkey = hotkey
-                metadata.id = chain_data.id
-                metadata.block = chain_data.block
-                metadata.path = disk_utils.get_local_model_snapshot_dir(
-                        self.local_store.base_dir,
-                        metadata.hotkey,
-                        metadata.id
-                    )
+            if chain_data is None:
+                return None
+
+            metadata = Container()
+            metadata.hotkey = hotkey
+            metadata.id = chain_data.id
+            metadata.block = chain_data.block
+            metadata.path = disk_utils.get_local_model_snapshot_dir(
+                self.local_store.base_dir,
+                metadata.hotkey,
+                metadata.id
+            )
+
+        if self.use_eval_cache:
+            metadata.model_idx = self.eval_state.get_model_idx(metadata.path)
+            first_seen = self.eval_state.get_model_first_seen(metadata.model_idx, metadata.hotkey, metadata.block)
+            if first_seen is not None and first_seen['hotkey'] != metadata.hotkey:
+                bt.logging.info(f"UID {uid}/{metadata.hotkey} serves copy of model idx {metadata.model_idx} by {first_seen['hotkey']} @ {first_seen['block']}, ignoring")
+                return None
+
         return metadata
 
     def inject_models(self):
