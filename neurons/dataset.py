@@ -72,7 +72,10 @@ class SubsetFineWebEdu2Loader(IterableDataset):
 
         attempt = 0
         config_name, page, split = page_info
-        bt.logging.info(f"Fetching page {page_info}")
+
+        # Don't log page info, as samples will be used for quite some time
+        #bt.logging.info(f"Fetching page {page_info}")
+
         while attempt < self.retry_limit:
             # Create the request parameters
             params = dict(dataset=self.name,
