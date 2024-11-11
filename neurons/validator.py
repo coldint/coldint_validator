@@ -566,6 +566,9 @@ class Validator:
     def clean_models(self):
         """Cleans up models that are no longer referenced."""
 
+        if self.config.no_clean:
+            return
+
         base_dir = pathlib.Path(self.local_store.base_dir)
         if not base_dir.exists():
             # Nothing to clean

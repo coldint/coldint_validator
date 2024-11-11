@@ -37,6 +37,11 @@ def validator_config():
         help="Does not launch a wandb run, does not set weights, does not check that your key is registered.",
     )
     parser.add_argument(
+        "--no-clean",
+        action="store_true",
+        help="Do not clean models.",
+    )
+    parser.add_argument(
         "--model_dir",
         default=os.path.join(constants.ROOT_DIR, "model-store/"),
         help="Where to store downloaded models",
