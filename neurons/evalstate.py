@@ -153,6 +153,21 @@ class EvalState(object):
         self.update_losses_shape()
         return len(self.models) - 1
 
+    def get_model_first_seen(self, model_idx, hotkey, block):
+        '''
+        Return dict with "hotkey" and "block" when model_idx was first seen.
+        '''
+        if model_idx is None:
+            return None
+
+        # Update dict if previous entry has higher or equal block number
+        if model_idx not in self.first_seen or self.first_seen[model_idx]['block'] >= block:
+            self.first_seen[model_idx] = {
+                'block': block,
+                'hotkey': hotkey,
+            }
+        return self.first_seen[model_idx]
+
     def pick_samples(self, models, n):
         '''
         Pick a subset of samples from the sample page pool, adding maximum new scope
