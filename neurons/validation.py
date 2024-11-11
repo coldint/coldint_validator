@@ -169,12 +169,13 @@ def compute_losses_regular(
     model.to(device)
     model.eval()
 
-    losses = [math.inf]*len(batches) # Use infinity to indicate failure
+    losses = [np.NaN]*len(batches) # Use NaN to indicate failure
     with torch.no_grad():
         cuda_errors = 0
         for i,batch in enumerate(batches):
             # None indicates the token sequence was too long or did not map back onto itself
             if batch is None:
+                losses[i] = math.inf
                 continue
 
             inputs = None
