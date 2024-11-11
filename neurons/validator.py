@@ -377,6 +377,55 @@ class Validator:
 
         return n_picked
 
+    def retrieve_metadata(self, new_metagraph):
+        new_metadata = {}
+        commits_seen = {}
+        uid_block = {}
+        for miner_uid, hotkey in enumerate(new_metagraph.hotkeys):
+            try:
+                mdl_metadata = btlite.get_metadata(
+                    subtensor=self.subtensor,
+                    netuid=self.config.netuid,
+                    hotkey=hotkey,
+                    reconnect=True,
+                )
+                if mdl_metadata is not None:
+                    # If commitment exists multiple times, only keep oldest one
+                    mdl_metadata = ModelMetadata.parse_chain_data(mdl_metadata)
+                    lbl = mdl_metadata.id.format_label(full=True)
+                    if lbl in commits_seen:
+                        seen = commits_seen[lbl]
+                        if seen['block'] < mdl_metadata.block:
+                            bt.logging.info(f"UID {miner_uid} commit {lbl} @ {mdl_metadata.block} later than UID {seen['uid']} @ {seen['block']}, discarding UID {miner_uid}")
+                            mdl_metadata = None
+                        elif seen['block'] > mdl_metadata.block:
+                            bt.logging.info(f"UID {miner_uid} commit {lbl} @ {mdl_metadata.block} earlier than UID {seen['uid']} @ {seen['block']}, discarding UID {seen['uid']}")
+                            del uid_block[seen['uid']]
+                            del new_metadata[seen['hotkey']]
+                        else:
+                            bt.logging.warning(f"UID {miner_uid} commit  {lbl} @ {mdl_metadata.block} in same block as UID {seen['uid']}; keeping both")
+                    else:
+                        bt.logging.debug(f"UID {miner_uid} commit {lbl} @ {mdl_metadata.block}")
+
+                if mdl_metadata is not None:
+                    new_metadata[hotkey] = mdl_metadata
+                    uid_block[miner_uid] = mdl_metadata.block
+                    commits_seen[lbl] = {
+                        'uid': miner_uid,
+                        'block': mdl_metadata.block,
+                        'hotkey': hotkey,
+                    }
+
+            except Exception as e:
+                bt.logging.error(
+                    f"Failed to fetch metadata for UID {miner_uid}: {type(e).__name__} {e} \n {traceback.format_exc()}"
+                )
+                if hotkey in self.hk_metadata:
+                    bt.logging.debug(f"Using old metadata after update failure for {hotkey}")
+                    new_metadata[hotkey] = self.hk_metadata[hotkey]
+
+        return new_metadata, uid_block
+
     def update_chain(self):
         now = time.time()
         if self.last_chain_update is not None and \
@@ -401,34 +450,21 @@ class Validator:
         self.last_chain_update = now
         bt.logging.info(f"Synced metagraph with {len(self.metagraph.neurons)} neurons, last_chain_update = {now}")
 
-        # Fetch miner metadata
-        new_metadata = {}
+        # Retrieve deduplicated commitment metadata
+        new_metadata, uid_block = self.retrieve_metadata(new_metagraph)
+
+        # Determine which commitments changed
         for miner_uid, hotkey in enumerate(new_metagraph.hotkeys):
-            try:
-                mdl_metadata = btlite.get_metadata(
-                    subtensor=self.subtensor,
-                    netuid=self.config.netuid,
-                    hotkey=hotkey,
-                    reconnect=True,
-                )
-                if mdl_metadata is not None:
-                    mdl_metadata = ModelMetadata.parse_chain_data(mdl_metadata)
-                    new_metadata[hotkey] = mdl_metadata
-                updated = new_metadata.get(hotkey, None) != self.hk_metadata.get(hotkey, None)
-                if ( old_metagraph
-                        and miner_uid in self.uid_last_retried_ts
-                        and len(old_metagraph.hotkeys)>miner_uid
-                        and old_metagraph.hotkeys[miner_uid] != hotkey ):
-                    bt.logging.info(f'Hotkey of UID {miner_uid} changed from {old_metagraph.hotkeys[miner_uid]} to {hotkey}; resetting uid_last_retried_ts')
-                    del self.uid_last_retried_ts[miner_uid]
-                bt.logging.debug(f"Metadata UID {miner_uid}/{hotkey}, updated={updated}, commitment: {mdl_metadata.id.format_label() if mdl_metadata else '---'}")
-            except Exception as e:
-                bt.logging.error(
-                    f"Failed to fetch metadata for UID {miner_uid}: {type(e).__name__} {e} \n {traceback.format_exc()}"
-                )
-                if hotkey in self.hk_metadata:
-                    bt.logging.debug(f"Using old metadata after update failure for {hotkey}")
-                    new_metadata[hotkey] = self.hk_metadata[hotkey]
+            new_meta = new_metadata.get(hotkey, None)
+            updated = new_meta != self.hk_metadata.get(hotkey, None)
+            if ( old_metagraph
+                    and miner_uid in self.uid_last_retried_ts
+                    and len(old_metagraph.hotkeys)>miner_uid
+                    and old_metagraph.hotkeys[miner_uid] != hotkey ):
+                bt.logging.info(f'Hotkey of UID {miner_uid} changed from {old_metagraph.hotkeys[miner_uid]} to {hotkey}; resetting uid_last_retried_ts')
+                del self.uid_last_retried_ts[miner_uid]
+            if updated:
+                bt.logging.debug(f"Metadata update for UID {miner_uid}/{hotkey}: {new_meta.id.format_label() if new_meta else '---'}")
 
         bt.logging.info(f"Synced metadata; {len(new_metadata)} commitments")
 
