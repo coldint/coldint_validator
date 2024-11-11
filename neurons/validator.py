@@ -56,6 +56,8 @@ import wandb
 import constants
 import dataset
 import validation
+from evalstate import EvalState
+
 from model import model_utils, competitions
 from model.data import ModelId, ModelMetadata
 from model.model_updater import ModelUpdater
@@ -106,13 +108,19 @@ class Validator:
         # Updated by model updater thread, used by evaluation thread
         self.hall_of_fame = {}
         self.competitions = {}
-        self.defaults = {}
+
+        # Configuration parameters which can be overwritten using the 'defaults' key in competitions.json
+        self.defaults = constants.defaults
 
         # Last known hotkey metadata
         self.hk_metadata = {}
 
         # Competition state, only used by evaluation thread
         self.cstate = {}
+
+        # eval_state: sample and loss cache
+        self.eval_state = EvalState()
+        self.eval_state.load_state(self.state_path())
 
         state = {}
         state_fn = os.path.join(self.state_path(), Validator.STATE_FILENAME)
@@ -130,7 +138,7 @@ class Validator:
                 # major.minor of version has not changed
                 self.hall_of_fame = state.pop("hall_of_fame", {})
                 self.competitions = state.pop("competitions", {})
-                self.defaults = state.pop("defaults", {})
+                self.defaults = state.pop("defaults", constants.defaults)
                 self.hk_metadata  = state.pop("hk_metadata", {})
                 self.hk_metadata = {hotkey: ModelMetadata(**info) for hotkey, info in self.hk_metadata.items()}
                 self.cstate = state.pop('cstate', {})
@@ -142,6 +150,9 @@ class Validator:
                 self.last_weights_set = state.pop("last_weights_set", time.time())
             else:
                 bt.logging.info("State version incompatible, starting with clean state")
+
+        self.eval_state.set_params(self.defaults)
+        self.use_eval_cache = self.defaults.get('use_eval_cache', True)
 
         bt.logging.debug(str(self.cstate))
 
@@ -512,7 +523,11 @@ class Validator:
         if comps is not None:
             with self.state_lock:
                 self.competitions = comps
-                self.defaults = defaults
+                cdefaults = constants.defaults.copy()
+                cdefaults.update(defaults)
+                self.defaults = cdefaults
+                self.eval_state.set_params(self.defaults)
+                self.use_eval_cache = self.defaults.get('use_eval_cache', True)
                 self.model_updater.set_competitions(self.competitions)
 
         # Hall of fame
@@ -750,26 +765,42 @@ class Validator:
         # Collect uid evaluation data here
         self.step_uid_log = dict()
 
-        # Currently, all competitions use the same dataset.
-        # Fetch samples that are shared between all competitions
-        try:
-            dataloader = dataset.SubsetFineWebEdu2Loader(
-                batch_size=1,
-                num_pages=0,
-                num_rows_per_page=self.defaults.get('rows_per_page',constants.n_rows_per_page),
-                tokenizer=None,
-                pack=False
-            )
-        except requests.exceptions.RequestException as e:
-            bt.logging.warning(f"Exception instantiating dataloader: {e}. Waiting one minute before retrying.")
-            await asyncio.sleep(60)
-            return
+        # Set model index in loss matrix for each uid that should be evaluated
+        active_meta = {
+            uid: self.get_uid_metadata(uid)
+                for uid in self.get_all_active_uids()
+        }
+        uid_to_matrix_idx = {}
+        if self.use_eval_cache:
+            uid_to_matrix_idx = {
+                uid: self.eval_state.get_model_idx(meta.path)
+                    if (meta is not None and meta.path is not None) else None
+                for uid, meta in active_meta.items()
+            }
+            self.eval_state.uid_to_matrix_idx = uid_to_matrix_idx
+            model_indices = [v for v in uid_to_matrix_idx.values() if v is not None]
 
-        samples = dataloader.fetch_data_to_rows(self.defaults.get('eval_pages',constants.n_eval_pages))
-        if len(samples) == 0:
-            bt.logging.warning(f"No samples to eval. Waiting one minute before retrying.")
-            await asyncio.sleep(60)
-            return
+            # Update sampleset
+            self.eval_state.update_sampleset()
+            self.eval_state.save_state(self.state_path())
+
+            # Pick subset for current evaluation
+            dataloader = self.eval_state.pick_samples(model_indices, self.defaults['eval_samples'])
+        else:
+            bt.logging.info(f"Not using eval cache, loading {self.defaults['eval_samples']} fresh samples")
+            try:
+                dataloader = dataset.SubsetFineWebEdu2Loader(
+                    batch_size=1,
+                    num_pages=0,
+                    num_rows_per_page=self.defaults['rows_per_page'],
+                    tokenizer=None,
+                    pack=False
+                )
+            except requests.exceptions.RequestException as e:
+                bt.logging.warning(f"Exception instantiating dataloader: {e}. Waiting one minute before retrying.")
+                await asyncio.sleep(60)
+                return
+            samples = dataloader.fetch_data_to_rows(self.defaults['eval_samples'] // self.defaults['rows_per_page'])
 
         n_models_evaluated = 0
         t_per_competition = constants.TTL_RUN_STEP/len(self.competitions)
@@ -820,8 +851,13 @@ class Validator:
             pend.update({uid: PRIO_POOL for uid in cur_pool})
             pend = [(prio, uid) for uid, prio in pend.items()]
             pend.sort(reverse=True)
-            uids_pool = [uid for (prio, uid) in pend[:pool_size+pend_size]]
+            if self.use_eval_cache:
+                uids_pool = [uid for (prio, uid) in pend[:pool_size+pend_size] \
+                                if uid in self.eval_state.uid_to_matrix_idx.keys()]
+            else:
+                uids_pool = [uid for (prio, uid) in pend[:pool_size+pend_size]]
             picked = set(uids_pool) - set(cur_pool)
+
             if len(picked):
                 bt.logging.debug(f"Picked: {picked}")
 
@@ -863,6 +899,16 @@ class Validator:
         model_geometry_per_uid = {uid: {} for uid in uids_pool}
         uid_to_label = {uid: '' for uid in uids_pool}
         uid_to_block = {uid: 1<<31 for uid in uids_pool}
+
+        # Fetch pre-cached losses
+        loss_mat_losses = {}
+        if self.use_eval_cache:
+            for uid in uids_pool:
+                mat_idx = self.eval_state.uid_to_matrix_idx[uid]
+                if mat_idx is None:
+                    continue
+                loss_mat_losses[mat_idx] = self.eval_state.losses[mat_idx, dataloader.sample_idxs]
+
         n_evaluated = 0
         for uid in uids_pool:
             if ts_expire is not None and time.time() > ts_expire:
@@ -872,11 +918,12 @@ class Validator:
             bt.logging.trace(f"Computing model losses for UID {uid}.")
             metadata = self.get_uid_metadata(uid)
 
-            losses_per_uid[uid] = [math.inf]*n_batches
+            losses_per_uid[uid] = [np.nan]*n_batches
             losses_pt_per_uid[uid] = losses_per_uid[uid].copy()
             if metadata is None:
                 bt.logging.debug(f"Unable to load metadata for UID {uid}. Setting loss to infinity.")
                 continue
+
             try:
                 uid_to_block[uid] = metadata.block if metadata.block is not None else 1<<31
                 uid_to_label[uid] = metadata.id.format_label()
@@ -887,10 +934,7 @@ class Validator:
                 # Get model tokenizer if no competition-wide tokenizer is set
                 mdl_batches = batches
                 max_token_id = batches_max_token_id
-                model_path = disk_utils.get_local_model_snapshot_dir(
-                        self.local_store.base_dir,
-                        metadata.hotkey,
-                        metadata.id) if metadata.path is None else metadata.path
+                model_path = metadata.path
                 tokenizer_json = os.path.join(model_path,'tokenizer.json')
                 if not os.path.exists(tokenizer_json):
                     # Assume tokenizer.json indicates an embedded tokenizer is available.
@@ -924,6 +968,11 @@ class Validator:
                     # We should never arrive here
                     raise Exception("No tokenizer available (no default and not supplied in model)")
 
+                loss_matrix_idx = None
+                if self.use_eval_cache:
+                    loss_matrix_idx = self.eval_state.uid_to_matrix_idx[uid]
+                    if loss_matrix_idx is None:
+                        raise Exception(f"eval_state inconsistency: loss_matrix_idx for UID {uid} unknown")
 
                 eval_results = utils.run_in_subprocess(
                     functools.partial(
@@ -934,6 +983,7 @@ class Validator:
                         batches=mdl_batches,
                         max_token_id=max_token_id,
                         device=self.config.device,
+                        loss_mat_losses=loss_mat_losses.get(loss_matrix_idx, None)
                     ),
                     ttl=constants.TTL_MODEL_EVAL,
                     mode="spawn",
@@ -950,13 +1000,18 @@ class Validator:
                 model_geometry_per_uid[uid] = eval_results['model_geometry']
                 bt.logging.debug(f"Losses for UID {uid}, per token: {naninf_mean(losses_pt):.03f} +- {naninf_std(losses_pt):.03f}, sum {naninf_mean(losses):.01f} +- {naninf_std(losses):.01f}, avg sample len: {eval_results['avg_sample_length']:.01f}")
 
+                # Update loss cache
+                if self.use_eval_cache:
+                    self.eval_state.update_loss_values(dataloader, loss_matrix_idx, np.array(losses))
+                    self.eval_state.save_state(self.state_path())
+
             except ModelIssue as e:
                 bt.logging.info(
                     f'Model issue for UID {uid}, disqualifying: {e}'
                 )
             except Exception as e:
                 bt.logging.error(
-                    f"Error in eval loop: {e}. Setting losses for UID {uid} to infinity.\n{traceback.format_exc()}"
+                    f"Error in eval loop: {e}. Setting losses for UID {uid} to NaN.\n{traceback.format_exc()}"
                 )
                 if transformers.__version__ != TRANSFORMERS_VERSION_OPTIMAL:
                     bt.logging.error(f'Please run with transformers version {TRANSFORMERS_VERSION_OPTIMAL} (currently running {transformers.__version__}) before reporting issues.')
@@ -1078,7 +1133,11 @@ class Validator:
                 metadata.hotkey = hotkey
                 metadata.id = chain_data.id
                 metadata.block = chain_data.block
-                metadata.path = None
+                metadata.path = disk_utils.get_local_model_snapshot_dir(
+                        self.local_store.base_dir,
+                        metadata.hotkey,
+                        metadata.id
+                    )
         return metadata
 
     def inject_models(self):
@@ -1237,7 +1296,8 @@ class Validator:
         # Install signal handler for clean shutdown.
         signal.signal(signal.SIGINT, self.shutdown)
         # Give update thread some time to fetch initial state from chain.
-        await asyncio.sleep(60)
+        if self.config.device != 'random':
+            await asyncio.sleep(60)
         while True:
             try:
                 self.current_block = self.metagraph.block.item()
@@ -1256,6 +1316,7 @@ class Validator:
                 bt.logging.error(
                     f"Error in validator loop \n {e} \n {traceback.format_exc()}"
                 )
+                await asyncio.sleep(5)
 
 def check_and_compute_losses(
         local_store=None,
@@ -1264,6 +1325,7 @@ def check_and_compute_losses(
         batches=None,
         max_token_id=None,
         device=None,
+        loss_mat_losses=None,
     ):
     cinfo = competition_info
     model_i = local_store.retrieve_model(metadata.hotkey, metadata.id, path=metadata.path)
@@ -1297,10 +1359,33 @@ def check_and_compute_losses(
         'hidden_size':getattr(model_i.pt_model.config,'hidden_size',0),
     }
 
-    if device == 'random':
+    if loss_mat_losses is not None:
+        # Only compute losses of samples with np.NaN in loss_mat_losses
+        compute_mask = np.isnan(loss_mat_losses)
+        inf_mask = np.isinf(loss_mat_losses)
+        if np.sum(inf_mask) > len(inf_mask)/2:
+            # In case more than half of losses are inf, assume there has been an evaluation problem earlier
+            compute_mask |= inf_mask
+        n_to_compute = np.sum(compute_mask)
+        n_cached = len(loss_mat_losses) - n_to_compute
+        full_batches = batches
+        batches = [b for b,m in zip(batches, compute_mask) if m]
+        bt.logging.info(f"{len(loss_mat_losses)} losses requested, {n_cached} cached, {n_to_compute} to compute")
+
+    if len(batches) == 0:
+        losses = []
+    elif device == 'random':
         losses = [(rnd+0.5) * len(batch[0]) if batch is not None else math.inf for rnd, batch in zip(np.random.rand(len(batches)), batches)]
     else:
         losses = validation.compute_losses(model_i.pt_model,allow_sliced,batches,device)
+
+    if loss_mat_losses is not None:
+        # Restore complete loss vector / batches using cached data
+        l = np.array(loss_mat_losses)
+        l[compute_mask] = losses
+        losses = l
+        batches = full_batches
+
     losses_pt = [loss_sum / len(batch[0]) if batch is not None else math.inf for loss_sum, batch in zip(losses, batches)]
     sample_lengths = [len(batch[0]) for batch in batches if batch is not None]
     avg_sample_length = 0 if len(sample_lengths) == 0 else np.mean(sample_lengths)
