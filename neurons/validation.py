@@ -30,15 +30,24 @@ import itertools
 from utilities.mathutils import *
 
 def group_samples(losses_per_uid, group_size):
-    uids = list(losses_per_uid.keys())
+    uids = []
+    for uid, losses in losses_per_uid.items():
+        if losses is None:
+            bt.logging.debug(f"group_samples(): no losses for UID {uid}")
+        else:
+            uids.append(uid)
+
     loss_mat = np.array([
         losses_per_uid[uid] for uid in uids
     ])
 
-    # Zero samples where everyone scored NaN
-    nans = np.isnan(loss_mat) | np.isinf(loss_mat)
-    all_nan = np.sum(nans, axis=0) == loss_mat.shape[0]
-    loss_mat[:, all_nan] = 0
+    # Convert NaNs to inf (NaNs don't compare correctly)
+    loss_mat[np.isnan(loss_mat)] = np.Inf
+
+    # Zero samples where everyone scored Inf
+    infs = np.isinf(loss_mat)
+    all_inf = np.sum(infs, axis=0) == loss_mat.shape[0]
+    loss_mat[:, all_inf] = 0
 
     # Shuffle samples to reduce effect of correlations
     n_samples = loss_mat.shape[1]
@@ -49,7 +58,15 @@ def group_samples(losses_per_uid, group_size):
 
     # Note that a single NaN in the set results in NaN for the group
     summed = loss_mat.reshape(len(uids),-1,group_size).sum(axis=2)
-    return {uid:np.ascontiguousarray(summed[i]) for i,uid in enumerate(uids)}
+
+    ret = {uid:np.ascontiguousarray(summed[i]) for i,uid in enumerate(uids)}
+
+    # Add back uids for which losses were None
+    for uid in losses_per_uid.keys():
+        if uid not in ret:
+            ret[uid] = None
+
+    return ret
 
 def compute_wins(
     losses_per_uid: typing.Dict[int, typing.List[float]],
