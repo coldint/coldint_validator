@@ -202,7 +202,7 @@ def compute_losses_regular(
             del inputs
             del logits
 
-    bt.logging.info(f'computed losses: {losses[:10]}...')
+    bt.logging.info(f'computed {len(losses)} losses: {losses[:10]}...')
 
     return losses
 
