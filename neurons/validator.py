@@ -1416,7 +1416,16 @@ def check_and_compute_losses(
         n_cached = len(loss_mat_losses) - n_to_compute
         full_batches = batches
         batches = [b for b,m in zip(batches, compute_mask) if m]
-        bt.logging.info(f"{len(loss_mat_losses)} losses requested, {n_cached} cached, {n_to_compute} to compute")
+
+        validate_idxs = []
+        if n_cached > n_to_compute:
+            # If using more cached than compute values, use a few samples to validate consistency
+            n_validate = min(int(n_cached * constants.SAMPLE_CHECK_FRACTION), constants.SAMPLE_CHECK_MAX_N)
+            validate_idxs = np.arange(len(full_batches))[~compute_mask][:n_validate]
+            validate_batches = [full_batches[v_i] for v_i in validate_idxs]
+            batches += validate_batches
+
+        bt.logging.info(f"{len(loss_mat_losses)} losses requested, {n_cached} cached, {n_to_compute}+{len(validate_idxs)} to compute")
 
     if len(batches) == 0:
         losses = []
@@ -1426,6 +1435,27 @@ def check_and_compute_losses(
         losses = validation.compute_losses(model_i.pt_model,allow_sliced,batches,device)
 
     if loss_mat_losses is not None:
+        if len(validate_idxs):
+            validate_losses = losses[-len(validate_idxs):]
+            losses = losses[:-len(validate_idxs)]
+            n_ok = 0
+            for i, batch_idx in enumerate(validate_idxs):
+                cached_loss = loss_mat_losses[batch_idx]
+                validation_loss = validate_losses[i]
+                if np.isfinite(validation_loss) and np.isfinite(cached_loss) and cached_loss != 0:
+                    delta_pct = 100 * (validation_loss / cached_loss - 1)
+                else:
+                    delta_pct = 0
+                if abs(delta_pct) < 0.1:
+                    n_ok += 1
+                else:
+                    bt.logging.error(f"Cached loss mismatch: idx {i} cached {cached_loss}, validated {validation_loss}")
+                #bt.logging.info(f"{i:3d}: cached {cached_loss:.03f}, vali {validation_loss:.03f}, delta {delta_pct:.02f}%")
+            if n_ok == len(validate_idxs):
+                bt.logging.info(f"Check of cached losses: all {n_ok} deltas <0.1%")
+            else:
+                bt.logging.error(f"Check of cached losses: {len(validate_idxs)-n_ok}/{len(validate_idxs)} losses differ by >0.1%, please report!")
+
         # Restore complete loss vector / batches using cached data
         l = np.array(loss_mat_losses)
         l[compute_mask] = losses
