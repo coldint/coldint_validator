@@ -6,6 +6,7 @@ import os
 import random
 import bittensor as bt
 from model.storage.disk import utils as disk_utils
+import time
 
 class EvalState(object):
     '''
@@ -23,6 +24,11 @@ class EvalState(object):
         self.sampleset = {'samples': []}
         self.models = []
         self.losses = np.array([])
+        self.first_seen = {}
+        self.last_extend_ts = 0
+
+    def set_params(self, params):
+        self.params = params.copy()
 
     def load_state(self, tgtdir):
         npz_fn = f"{tgtdir}/eval_losses.npz"
@@ -51,6 +57,8 @@ class EvalState(object):
         self.sampleset = meta['sampleset']
         self.models = meta['models']
         self.model_dir_hashes = meta['model_dir_hashes']
+        self.last_extend_ts = meta.get('last_extend_ts', 0)
+        self.first_seen = meta.get('first_seen', {})
 
         bt.logging.info(f"EvalState loaded: {len(self.models)} models, {len(self.sampleset['samples'])} samples, {len(self.model_dir_hashes)} model dir hashes")
 
@@ -62,6 +70,8 @@ class EvalState(object):
                 sampleset=self.sampleset,
                 models=self.models,
                 model_dir_hashes=self.model_dir_hashes,
+                last_extend_ts=self.last_extend_ts,
+                first_seen=self.first_seen,
             )))
 
     def update_sampleset(self):
@@ -69,40 +79,57 @@ class EvalState(object):
         Fill self.eval_state['sampleset'] with n_pool_pages pages.
         '''
         ss = self.sampleset
-        pagesize = constants.n_rows_per_page
+        pagesize = self.params.get('rows_per_page', 25)
+        now = time.time()
+
+        n_samples = 0
+        if 'samples' not in ss or len(ss['samples']) == 0:
+            ss['samples'] = []
+            n_samples = self.params.get('db_min_samples', 1000)
+        elif now - self.last_extend_ts > self.params.get('db_extend_interval', 12*3600):
+            self.last_extend_ts = now
+            n_samples = self.params.get('db_extend_samples', 1000)
+        else:
+            # Nothing to do
+            return
 
         # Update samples, a list of [dict(page=x, samples=y)]
-        if 'samples' not in ss or len(ss['samples']) == 0:
-            bt.logging.info(f"Loading {constants.n_pool_pages} pages of {pagesize} rows")
-            try:
-                dataloader = dataset.SubsetFineWebEdu2Loader(
-                    batch_size=1,
-                    num_pages=0,
-                    tokenizer=None,
-                    pack=False
-                )
-                dataloader.num_rows_per_page = pagesize
-            except requests.exceptions.RequestException as e:
-                bt.logging.warning(f"Exception instantiating dataloader: {e}.")
-                return
+        bt.logging.info(f"Loading {n_samples} new samples using pages of {pagesize} rows")
+        try:
+            dataloader = dataset.SubsetFineWebEdu2Loader(
+                batch_size=1,
+                num_pages=0,
+                tokenizer=None,
+                pack=False
+            )
+            dataloader.num_rows_per_page = pagesize
+        except requests.exceptions.RequestException as e:
+            bt.logging.warning(f"Exception instantiating dataloader: {e}.")
+            return
 
-            ss['samples'] = []
-            ss['num_rows_per_page'] = pagesize
-            for i_p in range(constants.n_pool_pages):
-                dataloader.buffer = []
-                dataloader.fetch_data_to_rows(1)
-                for i_s, s in enumerate(dataloader.buffer):
-                    ss['samples'].append(dict(page=dataloader.pages[0], ofs=i_s, sample=s))
+        new_samples = []
+        while len(new_samples) < n_samples:
+            dataloader.buffer = []
+            dataloader.fetch_data_to_rows(1)
+            for i_s, s in enumerate(dataloader.buffer):
+                new_samples.append(dict(page=dataloader.pages[0], ofs=i_s, sample=s))
 
-            # Shuffle all samples to mix different pages
-            random.shuffle(ss['samples'])
+        # Shuffle new samples to mix different pages
+        random.shuffle(new_samples)
+        new_samples = new_samples[:n_samples]
+        ss['samples'].extend(new_samples)
 
-            # Reshape loss matrix
-            self.update_losses_shape()
-            
-        # Possibly rotate sample
-        else:
-            pass
+        # Grow loss matrix if necessary
+        self.update_losses_shape()
+
+        # Drop oldest samples if we have enough
+        max_samples = self.params.get('db_max_samples', 10000)
+        if len(ss['samples']) > max_samples:
+            bt.logging.info("Dropping oldest {len(ss['samples'])-max_samples} samples")
+            ss['samples'] = ss['samples'][-max_samples:]
+            self.losses = self.losses[:,-max_samples:].copy()
+
+        self.last_extend_ts = time.time()
 
     def update_losses_shape(self):
         '''
