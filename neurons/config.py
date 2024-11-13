@@ -21,12 +21,6 @@ def validator_config():
         help="Turn off wandb logging.",
     )
     parser.add_argument(
-        "--pages_per_eval",
-        type=int,
-        default=constants.n_eval_pages,
-        help="Number of pages used to eval each step.",
-    )
-    parser.add_argument(
         "--dont_set_weights",
         action="store_true",
         help="Validator does not set weights on the chain.",
