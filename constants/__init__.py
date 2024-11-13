@@ -69,9 +69,15 @@ advantage_initial = 0.004
 # Advantage decay factor. 0.995 results in ~50% decay in one week
 advantage_decay_per_epoch = 0.995
 
-# validators number of pages to eval over miners on each step.`
-n_eval_pages = 8
-n_rows_per_page = 100
+defaults = {
+    'rows_per_page':        25,
+    'use_eval_cache':       True,
+    'db_min_samples':       2000,
+    'db_max_samples':       20000,
+    'db_extend_interval':   3600*4,
+    'db_extend_samples':    500,
+    'eval_samples':         1500,
+}
 
 DEFAULT_POOL_SIZE = 6
 DEFAULT_PEND_SIZE = 6
