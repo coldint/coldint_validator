@@ -58,7 +58,7 @@ MAX_SEQUENCE_LEN        = 4096
 CAP_SAMPLE_LEN          = 20480
 MAX_TOKENIZE_FAILS      = 3
 TTL_RUN_STEP            = 7200
-TTL_MODEL_EVAL          = 600
+TTL_MODEL_EVAL          = 900
 
 # validator weight moving average term
 weight_alpha = 0.5
