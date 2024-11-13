@@ -116,31 +116,17 @@ def compute_wins(
     # For each sample, determine winner and award 1 point
     n_samples = len(losses_per_uid[uids_sorted[0]])
     for sample_idx in range(n_samples):
-        sample_loss = [losses_per_uid[uid][sample_idx] for uid in uids_sorted]
-
-        for i_uid_a, uid_a in enumerate(uids_sorted):
-            uid_a_loss = sample_loss[i_uid_a]
-            uid_a_loss_adv = uid_a_loss * uid_advantage_factors[uid_a]
-            won_all = True
-            for i_uid_b in range(len(uids_sorted)):
-                if i_uid_a == i_uid_b:
-                    pass
-                uid_b_loss = sample_loss[i_uid_b]
-                if i_uid_b < i_uid_a:
-                    # uid_a should win from all *older* models in absolute sense
-                    if uid_a_loss >= uid_b_loss:
-                        won_all = False
-                        break
-                elif i_uid_b > i_uid_a:
-                    # uid_a should win from all *newer* models using its advantage factor
-                    if uid_a_loss_adv > uid_b_loss:
-                        won_all = False
-                        break
-            if won_all and not np.isnan(uid_a_loss) and not np.isinf(uid_a_loss):
-                wins[uid_a] += 1
-                break
+        win_uid = None
+        win_loss_adv = None
+        for uid in uids_sorted:
+            loss = losses_per_uid[uid][sample_idx]
+            if win_uid is None or loss < win_loss_adv:
+                win_uid = uid
+                win_loss_adv = loss * uid_advantage_factors[uid]
+        wins[win_uid] += 1
 
         # Determine winner in absolute sense
+        sample_loss = [losses_per_uid[uid][sample_idx] for uid in uids_sorted]
         abs_winner = np.argmin(sample_loss)
         abs_wins[uids_sorted[abs_winner]] += 1
 
