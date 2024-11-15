@@ -23,7 +23,7 @@ class EvalState(object):
     def __init__(self):
         self.sampleset = {'samples': []}
         self.models = []
-        self.losses = np.array([])
+        self.losses = np.empty([0,0])
         self.first_seen = {}
         self.last_extend_ts = 0
 
@@ -138,11 +138,10 @@ class EvalState(object):
         tgt_shape = (len(self.models), len(self.sampleset['samples']))
 
         # Grow if necessary
-        if len(self.losses.shape) != 2 or self.losses.shape[0] != tgt_shape[0] or self.losses.shape[1] != tgt_shape[1]:
+        if self.losses.shape[0] != tgt_shape[0] or self.losses.shape[1] != tgt_shape[1]:
             bt.logging.debug(f"Growing losses from {self.losses.shape} to {tgt_shape}")
             new_losses = np.full(tgt_shape, np.NaN)
-            if len(self.losses.shape) == 2:
-                new_losses[:self.losses.shape[0],:self.losses.shape[1]] = self.losses
+            new_losses[:self.losses.shape[0],:self.losses.shape[1]] = self.losses
             self.losses = new_losses
 
         return self.losses
