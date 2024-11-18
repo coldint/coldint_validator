@@ -527,6 +527,10 @@ class Validator:
         else:
             revisit_uids = ( np.arange(self.force_eval_until_uid_last, constants.SUBNET_N_UIDS).tolist() +
                             np.arange(0, force_eval_until_uid).tolist() )
+
+        # In case force_eval_until_uid_last was out of sync, retry most recent part
+        revisit_uids = revisit_uids[-constants.MODEL_RETRY_MAX_N_PER_LOOP:]
+
         bt.logging.debug(f"Revisiting UIDs: {revisit_uids}")
         n_revisit_models = self.visit_uids(
                 new_metagraph,
