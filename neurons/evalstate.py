@@ -245,7 +245,7 @@ class EvalState(object):
         losses: loss matrix (or vector)
 
         Returns:
-        True if successfull
+        < 0 on error, otherwise number of elements updated
         '''
 
         if type(models) not in (list, tuple):
@@ -254,14 +254,18 @@ class EvalState(object):
 
         if losses.shape[0] != len(models) or losses.shape[1] != len(dataloader.sample_idxs):
             bt.logging.error(f"update_losses(): invalid losses shape {losses.shape}")
-            return False
+            return -1
 
+        n_updated = 0
         for model_idx, model_loss in zip(models, losses):
+            model_n_updated = 0
             mask = ~np.isnan(model_loss)
             sample_idxs = dataloader.sample_idxs[mask]
-            self.losses[model_idx,sample_idxs] = model_loss[mask]
+            if not np.allclose(self.losses[model_idx,sample_idxs], model_loss[mask]):
+                self.losses[model_idx,sample_idxs] = model_loss[mask]
+                model_n_updated = len(model_loss[mask])
+                n_updated += model_n_updated
             model_nans = np.sum(np.isnan(self.losses[model_idx]))
-            bt.logging.debug(f"Updated {np.sum(mask)} losses for model idx {model_idx}, {model_nans}/{self.losses.shape[1]} NaNs remain")
+            bt.logging.debug(f"Updated {model_n_updated} losses for model idx {model_idx}, {model_nans}/{self.losses.shape[1]} NaNs remain")
 
-        return True
-
+        return n_updated
