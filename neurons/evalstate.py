@@ -3,6 +3,7 @@ import dataset
 import json
 import numpy as np
 import os
+import shutil
 import random
 import bittensor as bt
 from model.storage.disk import utils as disk_utils
@@ -31,8 +32,9 @@ class EvalState(object):
         self.params = params.copy()
 
     def load_state(self, tgtdir):
-        npz_fn = f"{tgtdir}/eval_losses.npz"
-        json_fn = f"{tgtdir}/eval_state.json"
+        livedir = f"{tgtdir}/evalstate"
+        npz_fn = f"{livedir}/eval_losses.npz"
+        json_fn = f"{livedir}/eval_state.json"
         if not os.path.exists(npz_fn) or not os.path.exists(json_fn):
             bt.logging.info("No stored EvalState available")
             return None
@@ -63,9 +65,16 @@ class EvalState(object):
         bt.logging.info(f"EvalState loaded: {len(self.models)} models, {len(self.sampleset['samples'])} samples, {len(self.model_dir_hashes)} model dir hashes")
 
     def save_state(self, tgtdir):
-        bt.logging.debug(f"Saving EvalState to {tgtdir}, {np.sum(~np.isnan(self.losses))}/{self.losses.size} loss values set")
-        np.savez(f"{tgtdir}/eval_losses.npz", losses=self.losses)
-        with open(f"{tgtdir}/eval_state.json", "w") as f:
+        livedir = f"{tgtdir}/evalstate"
+        tmpdir = f"{livedir}.tmp"
+        olddir = f"{livedir}.old"
+        if os.path.exists(tmpdir):
+            shutil.rmtree(tmpdir)
+        os.makedirs(tmpdir)
+
+        bt.logging.debug(f"Saving EvalState to {tmpdir}, {np.sum(~np.isnan(self.losses))}/{self.losses.size} loss values set")
+        np.savez(f"{tmpdir}/eval_losses.npz", losses=self.losses)
+        with open(f"{tmpdir}/eval_state.json", "w") as f:
             f.write(json.dumps(dict(
                 sampleset=self.sampleset,
                 models=self.models,
@@ -73,6 +82,16 @@ class EvalState(object):
                 last_extend_ts=self.last_extend_ts,
                 first_seen=self.first_seen,
             )))
+
+        bt.logging.debug(f"EvalState: atomic update to {livedir}")
+        # Keep state in olddir until new state is put in place.
+        if os.path.exists(olddir):
+            shutil.rmtree(olddir)
+        if os.path.exists(livedir):
+            os.rename(livedir, olddir)
+        os.rename(tmpdir, livedir)
+        if os.path.exists(olddir):
+            shutil.rmtree(olddir)
 
     def update_sampleset(self):
         '''
