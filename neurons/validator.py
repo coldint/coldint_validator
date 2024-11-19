@@ -1051,8 +1051,9 @@ class Validator:
 
                 # Update loss cache
                 if self.use_eval_cache:
-                    self.eval_state.update_loss_values(dataloader, loss_matrix_idx, np.array(losses))
-                    self.eval_state.save_state(self.state_path())
+                    n_updated = self.eval_state.update_loss_values(dataloader, loss_matrix_idx, np.array(losses))
+                    if n_updated > 0:
+                        self.eval_state.save_state(self.state_path())
 
             except ModelIssue as e:
                 bt.logging.info(
