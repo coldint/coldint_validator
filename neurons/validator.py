@@ -1407,7 +1407,11 @@ def check_and_compute_losses(
         loss_mat_losses=None,
     ):
     cinfo = competition_info
-    model_i = local_store.retrieve_model(metadata.hotkey, metadata.id, path=metadata.path)
+    try:
+        model_i = local_store.retrieve_model(metadata.hotkey, metadata.id, path=metadata.path)
+    except Exception as e:
+        raise ModelIssue(f"Failed to load model: {e}")
+
     mdl_allowed, reason = competitions.validate_model_constraints(model_i.pt_model, cinfo)
     if not mdl_allowed:
         raise ModelIssue(f"Model violates competition {cname} constraints: {reason}")
