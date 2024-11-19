@@ -77,6 +77,7 @@ defaults = {
     'db_extend_interval':   3600*4,
     'db_extend_samples':    500,
     'eval_samples':         1500,
+    'discard_winrate':      0.02,
 }
 
 DEFAULT_POOL_SIZE = 7

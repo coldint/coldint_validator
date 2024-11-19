@@ -114,6 +114,7 @@ class Validator:
 
         # Last known hotkey metadata
         self.hk_metadata = {}
+        self.discarded_commitments = set()
 
         # Competition state, only used by evaluation thread
         self.cstate = {}
@@ -141,6 +142,7 @@ class Validator:
                 self.defaults = state.pop("defaults", constants.defaults)
                 self.hk_metadata  = state.pop("hk_metadata", {})
                 self.hk_metadata = {hotkey: ModelMetadata(**info) for hotkey, info in self.hk_metadata.items()}
+                self.discarded_commitments = set(state.pop("discarded_commitments", []))
                 self.cstate = state.pop('cstate', {})
                 for cname, cinfo in self.cstate.items():
                     cinfo['uids_pending'] = {int(uid): prio for uid, prio in cinfo.get('uids_pending', {}).items()}
@@ -166,6 +168,7 @@ class Validator:
                 'defaults': self.defaults,
                 'hall_of_fame': self.hall_of_fame,
                 'hk_metadata': {hotkey: meta.dict() for hotkey, meta in self.hk_metadata.items() if meta is not None},
+                'discarded_commitments': list(self.discarded_commitments),
                 'cstate': self.cstate,
                 'force_eval_until_uid_last': self.force_eval_until_uid_last,
                 'last_weights_set': self.last_weights_set,
@@ -393,6 +396,7 @@ class Validator:
                     # If commitment exists multiple times, only keep oldest one
                     mdl_metadata = ModelMetadata.parse_chain_data(mdl_metadata)
                     lbl = mdl_metadata.id.format_label(full=True)
+                    discard_lbl = f"{hotkey}/{lbl}"
                     if lbl in commits_seen:
                         seen = commits_seen[lbl]
                         if seen['block'] < mdl_metadata.block:
@@ -404,6 +408,10 @@ class Validator:
                             del new_metadata[seen['hotkey']]
                         else:
                             bt.logging.warning(f"UID {miner_uid} commit  {lbl} @ {mdl_metadata.block} in same block as UID {seen['uid']}; keeping both")
+                    elif discard_lbl in self.discarded_commitments and self.defaults['discard_winrate'] > 0:
+                        # discard_winrate = 0 disables this feature
+                        bt.logging.debug(f"UID {miner_uid} commit {lbl} @ {mdl_metadata.block} discarded as non-competitive")
+                        mdl_metadata = None
                     else:
                         bt.logging.debug(f"UID {miner_uid} commit {lbl} @ {mdl_metadata.block}")
 
@@ -1118,6 +1126,17 @@ class Validator:
             if state['gb_space_left'] == 0:
                 bt.logging.debug(f"deleting model for UID {uid}; {state['usage_str']}")
                 self.local_store.delete_model(hk, metadata.id)
+
+            # Mark evaluated models with low win-rate as discarded
+            if (uid in win_info['win_rate'] and
+                    win_info['win_rate'][uid] < self.defaults['discard_winrate'] and
+                    win_info['win_abs_rate'][uid] < self.defaults['discard_winrate'] and
+                    not (uid in losses_per_uid and np.sum(~np.isnan(losses_per_uid[uid])) == 0) # Should be evaluated
+                ):
+                bt.logging.info(f"Marking model of UID {uid} as discarded due to low current and absolute win-rate")
+                lbl = metadata.id.format_label(full=True)
+                discard_lbl = f"{hk}/{lbl}"
+                self.discarded_commitments.add(discard_lbl)
 
         # Update state: weights and which uids to keep for next run
         with self.state_lock:
