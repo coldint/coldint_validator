@@ -885,25 +885,34 @@ class Validator:
             cstate = self.cstate[cname]
 
             # Select at most pool_size + pend_size uids, sorted on priority number
-            pend = cstate['uids_pending']
+            pend = cstate['uids_pending'].copy()
             cur_pool = cstate['uids_pool']
             bt.logging.debug(f"Competition {cname} pool: {cur_pool}, pending: {pend}")
             pend.update({uid: PRIO_POOL for uid in cur_pool})
             pend = [(prio, uid) for uid, prio in pend.items()]
             pend.sort(reverse=True)
             if self.use_eval_cache:
-                uids_pool = [uid for (prio, uid) in pend[:pool_size+pend_size] \
+                uids_pool = [uid for (prio, uid) in pend \
                                 if uid in self.eval_state.uid_to_matrix_idx.keys()]
             else:
-                uids_pool = [uid for (prio, uid) in pend[:pool_size+pend_size]]
-            picked = set(uids_pool) - set(cur_pool)
+                uids_pool = [uid for (prio, uid) in pend]
+            uids_pool = uids_pool[:pool_size+pend_size]
 
+            picked = set(uids_pool) - set(cur_pool)
+            not_picked = set(cstate['uids_pending'].keys()) - picked
             if len(picked):
                 bt.logging.debug(f"Picked: {picked}")
+            if len(not_picked):
+                bt.logging.debug(f"Not picked: {not_picked}")
 
             # Update pool/pending state
-            cstate['uids_pending'] = {}
             cstate['uids_pool'] = uids_pool
+            for uid_picked in picked:
+                del cstate['uids_pending'][uid_picked]
+            for uid_not_picked in not_picked:
+                if cstate['uids_pending'][uid_not_picked] < PRIO_NEW_MODEL:
+                    bt.logging.debug(f"Skipping pending re-evaluation of UID {uid_not_picked}")
+                    del cstate['uids_pending'][uid_not_picked]
 
         if len(uids_pool) == 0:
             with self.state_lock:
