@@ -152,14 +152,14 @@ class EvalState(object):
 
     def update_losses_shape(self):
         '''
-        Update self.losses to be of proper size, filling new entries with np.NaN
+        Update self.losses to be of proper size, filling new entries with np.nan
         '''
         tgt_shape = (len(self.models), len(self.sampleset['samples']))
 
         # Grow if necessary
         if self.losses.shape[0] != tgt_shape[0] or self.losses.shape[1] != tgt_shape[1]:
             bt.logging.debug(f"Growing losses from {self.losses.shape} to {tgt_shape}")
-            new_losses = np.full(tgt_shape, np.NaN)
+            new_losses = np.full(tgt_shape, np.nan)
             new_losses[:self.losses.shape[0],:self.losses.shape[1]] = self.losses
             self.losses = new_losses
 

@@ -1443,7 +1443,7 @@ def check_and_compute_losses(
     }
 
     if loss_mat_losses is not None:
-        # Only compute losses of samples with np.NaN in loss_mat_losses
+        # Only compute losses of samples with np.nan in loss_mat_losses
         compute_mask = np.isnan(loss_mat_losses)
         inf_mask = np.isinf(loss_mat_losses)
         if np.sum(inf_mask) > len(inf_mask)/2:

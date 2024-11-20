@@ -42,9 +42,9 @@ def group_samples(losses_per_uid, group_size):
     ])
 
     # Convert NaNs to inf (NaNs don't compare correctly)
-    loss_mat[np.isnan(loss_mat)] = np.Inf
+    loss_mat[np.isnan(loss_mat)] = np.inf
 
-    # Zero samples where everyone scored Inf
+    # Zero samples where everyone scored inf
     infs = np.isinf(loss_mat)
     all_inf = np.sum(infs, axis=0) == loss_mat.shape[0]
     loss_mat[:, all_inf] = 0
@@ -169,7 +169,7 @@ def compute_losses_regular(
     model.to(device)
     model.eval()
 
-    losses = [np.NaN]*len(batches) # Use NaN to indicate failure
+    losses = [np.nan]*len(batches) # Use NaN to indicate failure
     with torch.no_grad():
         cuda_errors = 0
         for i,batch in enumerate(batches):
