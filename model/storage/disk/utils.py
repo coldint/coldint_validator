@@ -16,22 +16,22 @@ def storage_state(base_dir=None,config=None):
         raise Exception(f'path {base_dir} does not exist')
     disk_used = sum(f.stat().st_size for f in base_dir.glob('**/*') if f.is_file())
     statvfs = os.statvfs(base_dir)
-    gb_in_use = 1+(disk_used//1e9)
-    gb_total = int(statvfs.f_frsize*statvfs.f_blocks//1e9)
-    gb_free = statvfs.f_bsize*statvfs.f_bavail//1e9
+    gb_in_use = int(round(disk_used/1e9))
+    gb_total = int(round(statvfs.f_frsize*statvfs.f_blocks/1e9))
+    gb_free = int(round(statvfs.f_bsize*statvfs.f_bavail/1e9))
     gb_to_delete = 0
     gb_space_left = 0
 
     size_limit = config.model_store_size_gb
     if size_limit>0:
-        usage_str = f"{gb_in_use} of {gb_total} GB in use, limit is {size_limit} GB"
+        usage_str = f"{gb_in_use} GB model store on {gb_total} GB disk, limit is {size_limit} GB"
         if gb_in_use >= size_limit:
             gb_to_delete = gb_in_use - size_limit
         else:
             gb_space_left = size_limit - gb_in_use
     else:
         min_free = -size_limit
-        usage_str = f"{gb_in_use} of {gb_total} GB in use, {gb_free} GB free, minimum required is {min_free} GB free"
+        usage_str = f"{gb_in_use} GB model store on {gb_total} GB disk, {gb_free} GB free, minimum required is {min_free} GB free"
         if gb_free <= min_free:
             gb_to_delete = min_free - gb_free
         else:
