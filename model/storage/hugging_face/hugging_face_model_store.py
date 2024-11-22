@@ -2,7 +2,7 @@ import sys
 import tempfile
 import os
 from huggingface_hub import HfApi
-from model.data import Model, ModelId
+from model.data import Model, ModelId, ModelIssue
 from model.storage.disk import utils
 from transformers import AutoModelForCausalLM, AutoTokenizer
 import bittensor as bt
@@ -60,7 +60,7 @@ class HuggingFaceModelStore(RemoteModelStore):
     ) -> Model:
         """Retrieves a trained model from Hugging Face."""
         if not model_id.commit:
-            raise ValueError("No Hugging Face commit id found to read from the hub.")
+            raise ModelIssue("No Hugging Face commit id found to read from the hub.")
 
         repo_id = model_id.namespace + "/" + model_id.name
 
@@ -71,9 +71,7 @@ class HuggingFaceModelStore(RemoteModelStore):
         )
         size = sum(repo_file.size for repo_file in model_info.siblings)
         if size > model_size_limit:
-            raise ValueError(
-                f"Hugging Face repo over maximum size limit. Size {size}. Limit {model_size_limit}."
-            )
+            raise ModelIssue(f"Hugging Face repo size {size} > limit {model_size_limit}.")
 
         try:
             # Include tokenizer if present in repo
