@@ -391,7 +391,7 @@ class Validator:
 
         return n_picked
 
-    def retrieve_metadata(self, new_metagraph):
+    def retrieve_metadata(self, new_metagraph, top_miner_uids=None):
         new_metadata = {}
         commits_seen = {}
         uid_block = {}
@@ -421,8 +421,12 @@ class Validator:
                             bt.logging.warning(f"UID {miner_uid} commit  {lbl} @ {mdl_metadata.block} in same block as UID {seen['uid']}; keeping both")
                     elif discard_lbl in self.discarded_commitments and self.defaults['discard_winrate'] > 0:
                         # discard_winrate = 0 disables this feature
-                        bt.logging.debug(f"UID {miner_uid} commit {lbl} @ {mdl_metadata.block} discarded as non-competitive")
-                        mdl_metadata = None
+                        if top_miner_uids is not None and miner_uid in top_miner_uids:
+                            bt.logging.debug(f"UID {miner_uid} marked as non-competitive, but also a top miner. Dropping from discarded list")
+                            self.discarded_commitments.remove(discard_lbl)
+                        else:
+                            bt.logging.debug(f"UID {miner_uid} commit {lbl} @ {mdl_metadata.block} discarded as non-competitive")
+                            mdl_metadata = None
                     else:
                         bt.logging.debug(f"UID {miner_uid} commit {lbl} @ {mdl_metadata.block}")
 
@@ -469,8 +473,11 @@ class Validator:
         self.last_chain_update = now
         bt.logging.info(f"Synced metagraph with {len(self.metagraph.neurons)} neurons, last_chain_update = {now}")
 
+        # Fetch top miners according to other validators
+        top_miner_uids = set(utils.list_top_miners(new_metagraph))
+
         # Retrieve deduplicated commitment metadata
-        new_metadata, uid_block = self.retrieve_metadata(new_metagraph)
+        new_metadata, uid_block = self.retrieve_metadata(new_metagraph, top_miner_uids=top_miner_uids)
 
         # Determine which commitments changed
         for miner_uid, hotkey in enumerate(new_metagraph.hotkeys):
@@ -504,8 +511,7 @@ class Validator:
             hotkey_metadata = new_metadata.get(hotkey, None)
             self.hk_metadata[hotkey] = hotkey_metadata
 
-        # Determine top miners according to other valis
-        top_miner_uids = set(utils.list_top_miners(new_metagraph))
+        # Visit new top miners
         new_top_uids = top_miner_uids - active_uids
         bt.logging.debug(f"Visiting top UIDs: {new_top_uids}")
         n_top_updated = self.visit_uids(
