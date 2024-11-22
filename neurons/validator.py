@@ -317,7 +317,7 @@ class Validator:
         bt.logging.error(f"Failed to get metagraph {n_retries} times, giving up")
         return None
 
-    def visit_uids(self, metagraph, metadata, uids, prio=0, retry_interval=0):
+    def visit_uids(self, metagraph, metadata, uids, prio=0, retry_interval=0, ttl=None):
         '''
         Visit a list/set of uids: download model and update competition pending pools.
         If retry_interval non-zero, force re-evaluation after this interval.
@@ -328,9 +328,15 @@ class Validator:
         if len(uids) == 0:
             return 0
 
-        now = time.time()
+        start_ts = time.time()
         n_picked = 0
         for uid in uids:
+            now = time.time()
+            time_spent = now - start_ts
+            if ttl is not None and time_spent > ttl:
+                bt.logging.info(f"visit_uids() ttl expired after visiting {n_picked} models, spent {time_spent:.01f}sec")
+                return n_picked
+
             if uid >= len(metagraph.hotkeys):
                 continue
             hotkey = metagraph.hotkeys[uid]
@@ -338,14 +344,24 @@ class Validator:
             model_prio = prio + random.random()
 
             if hotkey_metadata is None:
+                if prio == PRIO_TOP_MODEL:
+                    bt.logging.debug(f"No metadata for top model at UID {uid}, maybe removed as duplicate commitment")
                 self.hk_metadata[hotkey] = None
                 self.add_or_remove_uid_in_competition(uid, hotkey, model_prio)
                 continue
 
             updated = hotkey_metadata != self.hk_metadata.get(hotkey, None)
-            should_retry = retry_interval != 0 and now - self.uid_last_retried_ts.get(uid,0) >= retry_interval
-            if not updated and not should_retry:
-                continue
+            if not updated:
+                if retry_interval == 0:
+                    # Not retrying any of these models
+                    continue
+                last_retry_ts = self.uid_last_retried_ts.get(uid,0)
+                last_retry_dt = now - last_retry_ts
+                if last_retry_dt < retry_interval:
+                    bt.logging.debug(f"Not yet revisiting UID {uid}, last retry was {int(last_retry_dt)} sec ago")
+                    continue
+                bt.logging.info(f"Revisiting UID {uid}")
+
             self.uid_last_retried_ts[uid] = now
 
             # Sync the model, if necessary.
@@ -354,13 +370,14 @@ class Validator:
                 sync_result = asyncio.run(
                     self.model_updater.sync_model(hotkey, hotkey_metadata)
                 )
-                bt.logging.trace(f"Sync result: {sync_result}")
 
                 if sync_result in self.model_updater.RETRY_RESULTS:
                     # By not setting self.hk_metadata[hotkey], we will retry later
+                    bt.logging.debug(f"Sync result {sync_result} for UID {uid}, retrying later")
                     pass
                 else:
                     # Update hk_metadata, so we don't retry next loop
+                    bt.logging.debug(f"Sync result {sync_result} for UID {uid}, updating hotkey metadata")
                     self.hk_metadata[hotkey] = hotkey_metadata
 
                 if sync_result == self.model_updater.SYNC_RESULT_SUCCESS:
@@ -470,6 +487,9 @@ class Validator:
 
         bt.logging.info(f"Synced metadata; {len(new_metadata)} commitments")
 
+        download_start_ts = time.time()
+        download_ttl_ts = download_start_ts + constants.TTL_DOWNLOAD_MODELS
+
         # 3-step strategy:
         # 1. Pick top miners every TOP_MODEL_RETRY_INTERVAL
         # 2. Pick new models
@@ -494,6 +514,7 @@ class Validator:
                 new_top_uids,
                 prio=PRIO_TOP_MODEL,
                 retry_interval=constants.TOP_MODEL_RETRY_INTERVAL,
+                ttl=download_ttl_ts-time.time(),
         )
 
         n_uids = len(new_metagraph.hotkeys)
@@ -507,6 +528,7 @@ class Validator:
                 new_metadata,
                 non_active_uids,
                 prio=PRIO_NEW_MODEL,
+                ttl=download_ttl_ts-time.time(),
         )
 
         # We need all models to be re-evaluated periodically, to make sure they
@@ -540,6 +562,7 @@ class Validator:
                 revisit_uids,
                 prio=PRIO_REVISIT,
                 retry_interval=constants.GEN_MODEL_RETRY_INTERVAL//2,
+                ttl=download_ttl_ts-time.time(),
         )
         self.force_eval_until_uid_last = force_eval_until_uid
 
