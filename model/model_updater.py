@@ -4,7 +4,7 @@ import constants
 import os
 from model import competitions
 from model.model_utils import get_hash_of_two_strings
-from model.data import ModelMetadata
+from model.data import ModelMetadata, ModelIssue
 from model.storage.disk import utils
 from model.storage.local_model_store import LocalModelStore
 from model.storage.model_metadata_store import ModelMetadataStore
@@ -93,6 +93,10 @@ class ModelUpdater:
                     model = await self.remote_store.download_model(
                         metadata.id, path, model_size_limit
                     )
+            except ModelIssue as e:
+                # Indicates a reason the model is not allowed
+                bt.logging.info(f"Model not allowed: {e}")
+                return self.SYNC_RESULT_MODEL_NOT_ALLOWED
             except Exception as e:
                 bt.logging.debug(
                     f"Failed to download model for hotkey {hotkey} due to {e}."
