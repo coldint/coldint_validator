@@ -110,6 +110,9 @@ class Validator:
         self.hk_metadata = {}
         self.discarded_commitments = set()
 
+        # Timestamp when we last retried models with incentive we've already dropped
+        self.uid_last_retried_ts = dict()
+
         # Competition state, only used by evaluation thread
         self.cstate = {}
 
@@ -137,6 +140,7 @@ class Validator:
                 self.hk_metadata  = state.pop("hk_metadata", {})
                 self.hk_metadata = {hotkey: ModelMetadata(**info) for hotkey, info in self.hk_metadata.items()}
                 self.discarded_commitments = set(state.pop("discarded_commitments", []))
+                self.uid_last_retried_ts = state.pop("uid_last_retried_ts", {})
                 self.cstate = state.pop('cstate', {})
                 for cname, cinfo in self.cstate.items():
                     cinfo['uids_pending'] = {int(uid): prio for uid, prio in cinfo.get('uids_pending', {}).items()}
@@ -163,6 +167,7 @@ class Validator:
                 'hall_of_fame': self.hall_of_fame,
                 'hk_metadata': {hotkey: meta.dict() for hotkey, meta in self.hk_metadata.items() if meta is not None},
                 'discarded_commitments': list(self.discarded_commitments),
+                'uid_last_retried_ts': self.uid_last_retried_ts,
                 'cstate': self.cstate,
                 'force_eval_until_uid_last': self.force_eval_until_uid_last,
                 'last_weights_set': self.last_weights_set,
@@ -620,8 +625,6 @@ class Validator:
         Deletes models that are not needed, subject to diskspace requirements.
         """
 
-        # Timestamp when we last retried models with incentive we've already dropped
-        self.uid_last_retried_ts = dict()
         # Timestamp when we last fetched hall of fame
         self.last_cfg_fetch = None
         # Timestamp when we last updated chain
