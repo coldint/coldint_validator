@@ -59,7 +59,7 @@ import validation
 from evalstate import EvalState
 
 from model import model_utils, competitions
-from model.data import ModelId, ModelMetadata
+from model.data import ModelId, ModelMetadata, ModelIssue
 from model.model_updater import ModelUpdater
 from model.storage.disk.disk_model_store import DiskModelStore
 from model.storage.hugging_face.hugging_face_model_store import HuggingFaceModelStore
@@ -89,12 +89,6 @@ os.environ["TOKENIZERS_PARALLELISM"] = "true"
 
 class Container:
     '''Empty container object'''
-    pass
-
-class ModelIssue(Exception):
-    '''
-    Exception class to signal issues with models preventing evaluation.
-    '''
     pass
 
 class Validator:
