@@ -243,7 +243,6 @@ def main():
                     n_slices=args.auto_slice,
                     start_layers=args.start_layers if args.auto_slice is None else None,
                     device=args.device,
-                    max_sample_len=args.max_sample_len,
             )
             t_slicing = time.time() - t0
             logging.info(f'sliced: {sliced}')
