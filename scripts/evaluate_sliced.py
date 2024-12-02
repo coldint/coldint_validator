@@ -11,6 +11,7 @@ import copy
 import time
 import logging
 import argparse
+import subprocess
 
 args = None
 tokenizer = None
@@ -97,6 +98,11 @@ def load_sample_file(fn):
 def load_samples():
     samples = []
     for f in args.samples:
+        if f == 'license':
+            license_bytes = subprocess.check_output('python -c license.MAXLINES=1<<30;license()'.split(' '))
+            license_text = license_bytes.decode('utf-8')
+            samples.append({'text':license_text})
+            continue
         if not os.path.exists(f):
             logging.error(f'ignoring non-existant sample file {f}')
             continue
