@@ -55,8 +55,6 @@ def evaluate_losses(model,samples):
         except Exception as e:
             logging.info(f'failed to evaluate, using inf. Exception: {e}')
             losses.append(np.inf)
-    logging.debug('moving model to cpu')
-    model.to('cpu')
     return losses
 
 def load_sample_file(fn):
@@ -176,6 +174,8 @@ def arg_parser(argv):
             help='Increase verbosity')
     parser.add_argument('--device', default='cuda:0',
             help='Cuda device to use')
+    parser.add_argument('--skip-unsliced-eval', default=False, action='store_true',
+            help='Skip unsliced evaluation (e.g. for huge models that will not fit)')
     parser.add_argument('--start-layers', default='0',
             help='List of integers specifying layer starts for each slice (e.g. 0,4,8,12)')
     parser.add_argument('--auto-slice', metavar='N', default=None, type=int,
@@ -215,9 +215,13 @@ def main():
             attn_implementation = "flash_attention_2"
         else:
             attn_implementation = "eager"
+    if args.skip_unsliced_eval:
+        # don't actually load weights yet
+        torch.set_default_device('meta')
     t0 = time.time()
     model, tokenizer = load_model(args.model, attn_implementation=attn_implementation)
     t_loading = time.time() - t0
+    torch.set_default_device(None)
 
     if False and args.auto_slice is not None:
         n_layers = model.config.num_hidden_layers
@@ -236,12 +240,17 @@ def main():
     t_slicing = 0
     t_evaluating_sliced = 0
     with torch.no_grad():
-        t0 = time.time()
-        losses_regular = evaluate_losses(model,samples[:args.max_samples])
-        t_evaluating_regular = time.time() - t0
-        logging.debug(f'evaluated regularly in {t_evaluating_regular}s')
-
-        logging.info(f'losses regular: sum={sum(losses_regular)}, {losses_regular[:20]}...')
+        if args.skip_unsliced_eval:
+            losses_regular = 0
+            t_evaluating_regular = 0
+        else:
+            t0 = time.time()
+            losses_regular = evaluate_losses(model,samples[:args.max_samples])
+            t_evaluating_regular = time.time() - t0
+            logging.debug('moving model to cpu')
+            model.to('cpu')
+            logging.debug(f'evaluated regularly in {t_evaluating_regular}s')
+            logging.info(f'losses regular: sum={sum(losses_regular)}, {losses_regular[:20]}...')
 
         if hasattr(model,'sliced'):
             t0 = time.time()
