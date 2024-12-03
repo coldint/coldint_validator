@@ -85,7 +85,12 @@ class HuggingFaceModelStore(RemoteModelStore):
 
         has_lock,lockfile,pid_lock = utils.scan_locks(local_path)
         if has_lock:
-            raise ModelLockedException(f'active lock @{lockfile}, pid {pid_lock}')
+            if pid_lock is None:
+                # Process is likely not alive anymore; remove lock.
+                bt.logging.warning(f'found stale lock @{lockfile}, no pid, removing')
+                os.remove(lockfile)
+            else:
+                raise ModelLockedException(f'active lock @{lockfile}, pid {pid_lock}')
 
         # Get the directory the model is stored in.
         model_dir = utils.get_hf_download_path(local_path, model_id)
