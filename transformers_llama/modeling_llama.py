@@ -55,6 +55,7 @@ from transformers.utils import (
 )
 from .configuration_llama import LlamaConfig
 
+from transformers import AutoModelForCausalLM
 
 logger = logging.get_logger(__name__)
 
@@ -207,6 +208,16 @@ class LlamaRotaryEmbedding(nn.Module):
             self._dynamic_frequency_update(position_ids, device=x.device)
 
         # Core RoPE block
+        if self.inv_freq.device != x.device:
+            # This seems to be a bug when using device_map; self.inv_freq is
+            # stored on cpu on creation and we cannot use model.to() to move
+            # everything to cuda, so nothing is moving self.inv_freq to cuda
+            # and it ends up not necessarily on x.device.
+            # Using torch.set_default_device() works, but leads to issues,
+            # where something internal to rope init has different rounding,
+            # making the result of eval not exactly identical for sliced and
+            # non-sliced.
+            self.inv_freq = self.inv_freq.to(x.device)
         inv_freq_expanded = self.inv_freq[None, :, None].float().expand(position_ids.shape[0], -1, 1)
         position_ids_expanded = position_ids[:, None, :].float()
         # Force float32 (see https://github.com/huggingface/transformers/pull/29285)
@@ -1150,14 +1161,19 @@ class SlicedLlamaForCausalLMWrapper:
         Evaluate losses of samples on sliced model.
         """
         output_states = []
-        for slice_idx,model_slice in enumerate(self.slices):
-            model_slice = model_slice.to(self.device)
-            model_params = model_slice.num_parameters()
+        for slice_idx,model_slice_opts in enumerate(self.slices):
+            model_slice = AutoModelForCausalLM.from_pretrained(
+                device_map=model_slice_opts['device_map'],
+                pretrained_model_name_or_path=self.model.name_or_path,
+                attn_implementation=self.model.config._attn_implementation,
+                torch_dtype=self.model.dtype
+            )
+            for k,v in model_slice_opts['config'].items():
+                setattr(model_slice.config,k,v)
+            model_params = model_slice.num_loaded_parameters()
             state_size = sum([s.numel() for s in output_states if s is not None])
-            logger.info(f'evaluating slice {slice_idx}, n_params={model_params}, state_size={state_size}...')
+            logger.info(f'evaluating slice {slice_idx}, n_params={model_params/1e6:.01f}M, state_size={state_size}...')
             losses = self.evaluate_losses_slice(model_slice,samples=samples,output_states=output_states,reduction=reduction)
-            model_slice = model_slice.to('cpu')
-            torch.cuda.empty_cache()
         return losses
 
     def evaluate_losses_slice(self,model_slice,samples=None,output_states=[],reduction='mean'):
@@ -1222,23 +1238,29 @@ class SlicedLlamaForCausalLMWrapper:
         return losses
 
     def gen_slices(self):
-        model_data = {}
-        # strip model, restore later
+        # generate map mapping all elements to meta device
+        meta_map = {}
         for pname, p in self.model.named_parameters():
-            model_data[pname] = p.data
-            p.data = torch.zeros(0)
+            meta_map[pname] = 'meta'
+            if p.device.type != 'meta':
+                p.data = torch.zeros(0,dtype=self.model.dtype) # dtype must be set or model dtype will magically change
 
         self.slices = []
         for i,layer_from in enumerate(self.start_layers[:-1]):
             layer_to = self.start_layers[i+1]
             logger.info(f'Generating slice #{i}: {layer_from}..{layer_to}')
+            slice_config = dict(
+                start_at_layer=layer_from,
+                return_states_at_layer=layer_to,
+            )
+            slice_device_map = meta_map.copy()
             params = self.filter_params(layer_from=layer_from,layer_to=layer_to)
-            model_slice = copy.deepcopy(self.model) # copy of empty model
-            for pname,p in model_slice.named_parameters():
-                if pname in params['param_names_kept']:
-                    p.data = model_data[pname]
-            model_slice.config.start_at_layer = layer_from
-            model_slice.config.return_states_at_layer = layer_to
+            for param in params['param_names_kept']:
+                slice_device_map[param] = self.device
+            model_slice = dict(
+                config=slice_config,
+                device_map=slice_device_map,
+            )
             self.slices.append(model_slice)
 
     @staticmethod
@@ -1308,6 +1330,13 @@ class SlicedLlamaForCausalLM(LlamaPreTrainedModel):
         Generate a container object with this model sliced into pieces.
         """
         return SlicedLlamaForCausalLMWrapper(model=self,**kwargs)
+
+    def num_loaded_parameters(self):
+        ret = 0
+        for p in self.parameters():
+            if p.device.type != 'meta':
+                ret += p.numel()
+        return ret
 
     def get_input_embeddings(self):
         return self.model.embed_tokens
