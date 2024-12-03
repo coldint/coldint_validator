@@ -146,7 +146,7 @@ def load_model(path, attn_implementation="flash_attention_2"):
         torch_dtype=dtype
     )
     try:
-        tokenizer_obj = AutoTokenizer.from_pretrained(path)
+        tokenizer_obj = AutoTokenizer.from_pretrained(args.tokenizer or path)
         logging.info('loaded tokenizer from model path')
     except:
         tokenizer_name = "Xenova/gpt-4"
@@ -166,6 +166,8 @@ def arg_parser(argv):
             help='Evaluate not more than N samples')
     parser.add_argument('--max-sample-len', default=100000, type=int,
             help='Maximum sample length')
+    parser.add_argument('--tokenizer', default=None,
+            help='Override embedded or default tokenizer')
     parser.add_argument('--attn', default=None, choices=['sdpa','eager','flash_attention_2'],
             help='Override attention implementation when loading model (note that eager and flash_attention_2 are compatible, but the latter requires a cuda device)')
     parser.add_argument('--dtype', default='bfloat16', choices=['bfloat16','float16','float32'],
