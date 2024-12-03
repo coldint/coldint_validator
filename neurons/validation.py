@@ -234,7 +234,7 @@ def compute_losses(
         gpu_ram = torch.cuda.get_device_properties(device).total_memory
         # The fraction below is somewhat arbitrary. The precise amount of ram
         # needed depends on many factors. TODO.
-        arbitrary_fraction = 0.65
+        arbitrary_fraction = 0.35
         use_gpu_ram = int(arbitrary_fraction * gpu_ram)
         if model_bytes > use_gpu_ram:
             # This assumes all slices are created equal, which isn't true.
