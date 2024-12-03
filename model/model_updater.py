@@ -4,13 +4,14 @@ import constants
 import os
 from model import competitions
 from model.model_utils import get_hash_of_two_strings
-from model.data import ModelMetadata, ModelIssue
+from model.data import ModelMetadata, ModelIssue, ModelLockedException
 from model.storage.disk import utils
 from model.storage.local_model_store import LocalModelStore
 from model.storage.model_metadata_store import ModelMetadataStore
 from model.storage.remote_model_store import RemoteModelStore
 from transformers import AutoModelForCausalLM
 import torch
+import traceback
 
 class ModelUpdater:
     """Checks if the currently tracked model for a hotkey matches what the miner committed to the chain."""
@@ -97,9 +98,15 @@ class ModelUpdater:
                 # Indicates a reason the model is not allowed
                 bt.logging.info(f"Model not allowed: {e}")
                 return self.SYNC_RESULT_MODEL_NOT_ALLOWED
-            except Exception as e:
+            except (OSError,ModelLockedException) as e:
                 bt.logging.debug(
-                    f"Failed to download model for hotkey {hotkey} due to {e}."
+                    f"Failed to download model for hotkey {hotkey} due to {type(e).__name__} '{str(e).replace(os.linesep,' ')}'"
+                )
+                return self.SYNC_RESULT_DOWNLOAD_FAILED
+            except Exception as e:
+                # Include traceback for unanticipated exceptions.
+                bt.logging.debug(
+                    f"Failed to download model for hotkey {hotkey} due to {type(e).__name__} // {e}.\n{traceback.format_exc()}"
                 )
                 return self.SYNC_RESULT_DOWNLOAD_FAILED
 
