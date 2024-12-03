@@ -2,7 +2,7 @@ import sys
 import tempfile
 import os
 from huggingface_hub import HfApi
-from model.data import Model, ModelId, ModelIssue
+from model.data import Model, ModelId, ModelIssue, ModelLockedException
 from model.storage.disk import utils
 from transformers import AutoModelForCausalLM, AutoTokenizer
 import bittensor as bt
@@ -85,7 +85,7 @@ class HuggingFaceModelStore(RemoteModelStore):
 
         has_lock,lockfile,pid_lock = utils.scan_locks(local_path)
         if has_lock:
-            raise Exception(f'active lock @{lockfile}, pid {pid_lock}')
+            raise ModelLockedException(f'active lock @{lockfile}, pid {pid_lock}')
 
         # Get the directory the model is stored in.
         model_dir = utils.get_hf_download_path(local_path, model_id)

@@ -18,6 +18,12 @@ class ModelIssue(Exception):
     '''
     pass
 
+class ModelLockedException(Exception):
+    '''
+    Exception class to signal a model is locked.
+    '''
+    pass
+
 class ModelId(BaseModel):
     """Uniquely identifies a trained model"""
 
