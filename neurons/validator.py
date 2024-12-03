@@ -1434,7 +1434,9 @@ def check_and_compute_losses(
     ):
     cinfo = competition_info
     try:
+        torch.set_default_device('meta')
         model_i = local_store.retrieve_model(metadata.hotkey, metadata.id, path=metadata.path)
+        torch.set_default_device(None)
     except Exception as e:
         raise ModelIssue(f"Failed to load model: {e}")
 
@@ -1446,6 +1448,11 @@ def check_and_compute_losses(
     if 'Sliced' in model_type:
         # Test the exact model type name to check whether slicing is allowed by config:
         allow_sliced = model_type in cinfo['model_types']
+
+    if not allow_sliced:
+        logging.info(f'Model of type {model_type} cannot be sliced, reloading on device')
+        # Not expected. Load model properly.
+        model_i = local_store.retrieve_model(metadata.hotkey, metadata.id, path=metadata.path)
 
     embed_size = None
     try:

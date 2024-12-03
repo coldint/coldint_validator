@@ -239,6 +239,8 @@ def compute_losses(
         if model_bytes > use_gpu_ram:
             # This assumes all slices are created equal, which isn't true.
             n_slices = (model_bytes+use_gpu_ram)//use_gpu_ram
+        elif model.device.type == 'meta':
+            n_slices = 1 # need to reload anyway
 
     if n_slices is None or test_sliced_eval:
         regular_losses = compute_losses_regular(model,batches,device)
