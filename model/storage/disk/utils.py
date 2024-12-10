@@ -182,16 +182,23 @@ def get_hash_of_file(path: str) -> str:
 
 
 def get_hash_of_directory(path: str) -> str:
-    dir_hash = hashlib.sha256()
+    '''
+    Get hash of files in directory <path>, not recursing into subdirs.
+    If no files have been hashed, return None, otherwise return hash.
+    '''
 
-    # Recursively walk everything under the directory for files.
+    dir_hash = hashlib.sha256()
+    n_hashed = 0
+
     for cur_path, dirnames, filenames in os.walk(path):
-        # Ensure we walk future directories in a consistent order.
-        dirnames.sort()
         # Ensure we walk files in a consistent order.
         for filename in sorted(filenames):
             path = os.path.join(cur_path, filename)
             file_hash = get_hash_of_file(path)
             dir_hash.update(file_hash.encode())
+            n_hashed += 1
+
+    if n_hashed == 0:
+        return None
 
     return base64.b64encode(dir_hash.digest()).decode("utf-8")
