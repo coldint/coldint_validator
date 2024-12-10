@@ -207,10 +207,11 @@ class EvalState(object):
         except:
             # model_hash not yet known
             pass
-        bt.logging.debug(f"Model hash {model_hash} = index {len(self.models)}")
+        idx = len(self.models)
+        bt.logging.debug(f"Model hash {model_hash} = index {idx}")
         self.models.append(model_hash)
         self.update_losses_shape()
-        return len(self.models) - 1
+        return idx
 
     def get_model_first_seen(self, model_idx, hotkey, block):
         '''
