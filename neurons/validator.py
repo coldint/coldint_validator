@@ -1092,7 +1092,11 @@ class Validator:
 
                 # Update loss cache
                 if self.use_eval_cache:
-                    n_updated = self.eval_state.update_loss_values(dataloader, loss_matrix_idx, np.array(losses))
+                    if eval_results.get('reset_loss_cache', False):
+                        self.eval_state.reset_loss_values(loss_matrix_idx)
+                        n_updated = 1
+                    else:
+                        n_updated = self.eval_state.update_loss_values(dataloader, loss_matrix_idx, np.array(losses))
                     if n_updated > 0:
                         self.eval_state.save_state(self.state_path())
 
@@ -1515,6 +1519,7 @@ def check_and_compute_losses(
     else:
         losses = validation.compute_losses(model_i.pt_model,allow_sliced,batches,device)
 
+    reset_loss_cache = False
     if loss_mat_losses is not None:
         if len(validate_idxs):
             validate_losses = losses[-len(validate_idxs):]
@@ -1536,6 +1541,8 @@ def check_and_compute_losses(
                 bt.logging.info(f"Check of cached losses: all {n_ok} deltas <0.1%")
             else:
                 bt.logging.error(f"Check of cached losses: {len(validate_idxs)-n_ok}/{len(validate_idxs)} losses differ by >0.1%, please report!")
+                reset_loss_cache = True
+                loss_mat_losses = [np.nan]*len(loss_mat_losses)
 
         # Restore complete loss vector / batches using cached data
         l = np.array(loss_mat_losses)
@@ -1552,6 +1559,7 @@ def check_and_compute_losses(
         'losses_pt':losses_pt,
         'avg_sample_length':avg_sample_length,
         'model_geometry':model_geometry,
+        'reset_loss_cache': reset_loss_cache,
     }
 
 def assert_cuda():
