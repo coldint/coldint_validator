@@ -21,6 +21,9 @@ class EvalState(object):
     # Cache for hashes of model directories
     model_dir_hashes = {}
 
+    # Hash of empty/non-existent dir
+    VOID_HASH = "47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU="
+
     def __init__(self):
         self.sampleset = {'samples': []}
         self.models = []
@@ -30,6 +33,15 @@ class EvalState(object):
 
     def set_params(self, params):
         self.params = params.copy()
+
+    def fix_void_hashes(self):
+        to_update = {}
+        for dirname, hashval in self.model_dir_hashes.items():
+            if hashval == self.VOID_HASH:
+                bt.logging.info(f'Model at {dirname} has void hash, fixing...')
+                to_update[dirname] = None
+        self.model_dir_hashes.update(to_update)
+        bt.logging.info(f'Fixed-up {len(to_update)} incorrect directory hashes')
 
     def load_state(self, tgtdir):
         livedir = f"{tgtdir}/evalstate"
@@ -61,6 +73,8 @@ class EvalState(object):
         self.model_dir_hashes = meta['model_dir_hashes']
         self.last_extend_ts = meta.get('last_extend_ts', 0)
         self.first_seen = meta.get('first_seen', {})
+
+        self.fix_void_hashes()
 
         bt.logging.info(f"EvalState loaded: {len(self.models)} models, {len(self.sampleset['samples'])} samples, {len(self.model_dir_hashes)} model dir hashes")
 
