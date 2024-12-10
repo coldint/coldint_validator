@@ -303,3 +303,14 @@ class EvalState(object):
             bt.logging.debug(f"Updated {model_n_updated} losses for model idx {model_idx}, {model_nans}/{self.losses.shape[1]} NaNs remain")
 
         return n_updated
+
+    def reset_loss_values(self, model_idx):
+        '''
+        Reset losses for a particular model
+        '''
+        if model_idx >= self.losses.shape[0]:
+            return False
+
+        self.losses[model_idx,:] = np.nan
+        bt.logging.info(f"Reset cached losses for model idx {model_idx}")
+        return True
