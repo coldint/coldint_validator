@@ -998,8 +998,15 @@ class Validator:
                 bt.logging.warning("Model eval loop taking too long, stopping loop")
                 break
 
-            bt.logging.trace(f"Computing model losses for UID {uid}.")
             metadata = self.get_uid_metadata(uid)
+            if metadata is None:
+                bt.logging.warning(f"UID {uid} metadata unavailable")
+                continue
+
+            content_hash = "---"
+            if metadata.model_idx is not None:
+                content_hash = self.eval_state.models[metadata.model_idx]
+            bt.logging.info(f"Computing losses for UID {uid}, model idx {metadata.model_idx}, content hash {content_hash}.")
 
             losses_per_uid[uid] = [np.nan]*n_batches
             losses_pt_per_uid[uid] = losses_per_uid[uid].copy()
@@ -1236,11 +1243,15 @@ class Validator:
                 metadata.id
             )
 
+        metadata.model_idx = None
         if self.use_eval_cache:
             metadata.model_idx = self.eval_state.get_model_idx(metadata.path)
             first_seen = self.eval_state.get_model_first_seen(metadata.model_idx, metadata.hotkey, metadata.block)
             if first_seen is not None and first_seen['hotkey'] != metadata.hotkey:
                 bt.logging.info(f"UID {uid}/{metadata.hotkey} serves copy of model idx {metadata.model_idx} by {first_seen['hotkey']} @ {first_seen['block']}, ignoring")
+                return None
+            if metadata.model_idx is None:
+                bt.logging.info(f"UID {uid}/{metadata.hotkey} unable to get model index")
                 return None
 
         return metadata
