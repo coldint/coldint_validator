@@ -1008,12 +1008,6 @@ class Validator:
                 content_hash = self.eval_state.models[metadata.model_idx]
             bt.logging.info(f"Computing losses for UID {uid}, model idx {metadata.model_idx}, content hash {content_hash}.")
 
-            losses_per_uid[uid] = [np.nan]*n_batches
-            losses_pt_per_uid[uid] = losses_per_uid[uid].copy()
-            if metadata is None:
-                bt.logging.debug(f"Unable to load metadata for UID {uid}. Setting loss to infinity.")
-                continue
-
             try:
                 uid_to_block[uid] = metadata.block if metadata.block is not None else 1<<31
                 uid_to_label[uid] = metadata.id.format_label()
