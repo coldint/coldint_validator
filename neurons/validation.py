@@ -69,7 +69,7 @@ def group_samples(losses_per_uid, group_size):
     return ret
 
 def compute_wins(
-    losses_per_uid: typing.Dict[int, typing.List[float]],
+    all_losses_per_uid: typing.Dict[int, typing.List[float]],
     uid_to_block: typing.Dict[int, int],
     current_block,
     advantage_initial,
@@ -92,12 +92,17 @@ def compute_wins(
                         advantage_factors
                         matrix {uid_a -> {uid_b -> info}}
     """
+    wins = {uid: 0 for uid in all_losses_per_uid.keys()}
+    abs_wins = {uid: 0 for uid in all_losses_per_uid.keys()}
+    losses_per_uid = {}
+    for uid, losses in all_losses_per_uid.items():
+        if losses is None:
+            bt.logging.debug(f'compute_wins() dropping UID {uid} because losses is None')
+            continue
+        losses_per_uid[uid] = np.array(losses)
     uids_sorted = sorted(losses_per_uid.keys(), key=lambda x: uid_to_block.get(x))
     if len(uids_sorted) == 0:
         return {}
-    wins = {uid: 0 for uid in uids_sorted}
-    abs_wins = {uid: 0 for uid in uids_sorted}
-    losses_per_uid = {uid: np.array(losses) for uid, losses in losses_per_uid.items()}
 
     # Determine advantage factors
     uid_advantage_factors = {}
