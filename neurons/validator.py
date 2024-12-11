@@ -132,7 +132,7 @@ class Validator:
         self.force_eval_until_uid_last = None
         self.last_weights_set = time.time()
         with self.state_lock:
-            if 'version' in state and state['version']//10 == constants.__spec_version__//10:
+            if 'version' in state and state['version']//100 == constants.__spec_version__//100:
                 # major.minor of version has not changed
                 self.hall_of_fame = state.pop("hall_of_fame", {})
                 self.competitions = state.pop("competitions", {})

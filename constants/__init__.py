@@ -12,8 +12,8 @@ __validator_version__ = "1.0.9"
 version_split = __validator_version__.split(".")
 __spec_version__ = (
     (1000 * int(version_split[0]))
-    + (10 * int(version_split[1]))
-    + (1 * int(version_split[2]))
+    +(100 * int(version_split[1]))
+    +  (1 * int(version_split[2]))
 )
 weights_version_key = __spec_version__
 
