@@ -1136,7 +1136,7 @@ class Validator:
         win_rate_indices = win_rate.argsort()
         sorted_uids = [uids_pool[i] for i in win_rate_indices]
         new_uids_pool = sorted_uids[-pool_size:]
-        bt.logging.info(f'selected {pool_size} winning models: {new_uids_pool}')
+        bt.logging.info(f'selected {pool_size} winning models for competition {cname}: {new_uids_pool}')
 
         dropped_uids = sorted_uids[:-pool_size]
         if len(dropped_uids):
