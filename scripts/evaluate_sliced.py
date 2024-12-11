@@ -135,7 +135,7 @@ def load_model(path, attn_implementation="flash_attention_2"):
     elif args.dtype == 'float32':
         dtype = torch.float32
     else:
-        raise ValueError("Unkown datatype {args.dtype}")
+        raise ValueError(f"Unkown datatype {args.dtype}")
 
     logging.info(f"Loading model {path}, attn={attn_implementation}, dtype {args.dtype}")
     model = AutoModelForCausalLM.from_pretrained(

@@ -158,7 +158,7 @@ class EvalState(object):
         # Drop oldest samples if we have enough
         max_samples = self.params.get('db_max_samples', 10000)
         if len(ss['samples']) > max_samples:
-            bt.logging.info("Dropping oldest {len(ss['samples'])-max_samples} samples")
+            bt.logging.info(f"Dropping oldest {len(ss['samples'])-max_samples} samples")
             ss['samples'] = ss['samples'][-max_samples:]
             self.losses = self.losses[:,-max_samples:].copy()
 

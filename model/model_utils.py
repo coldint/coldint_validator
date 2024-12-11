@@ -201,7 +201,7 @@ def convert_dtype(dtype):
         return torch.float16
     if dtype == 'float32':
         return torch.float32
-    raise ValueError("Unknown torch datatype {dtype}")
+    raise ValueError(f"Unknown torch datatype {dtype}")
 
 def load_local_model(model_dir: str, dtype='bfloat16') -> PreTrainedModel:
     """Loads a model from a directory."""
