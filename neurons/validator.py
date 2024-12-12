@@ -1197,7 +1197,7 @@ class Validator:
                 "block": uid_to_block.get(uid, 1<<31),
                 "losses": losses_per_uid[uid],
                 "n_samples": naninf_count(losses_per_uid[uid]),
-                "n_inf": np.sum(np.isinf(losses_per_uid[uid])),
+                "n_inf": np.sum(np.isinf(losses_per_uid[uid])) if losses_per_uid[uid] is not None else 0,
                 "avg_sample_len": avg_sample_len_per_uid[uid],
                 "loss_pt_avg": naninf_mean(losses_pt_per_uid[uid]),
                 "loss_pt_std": naninf_std(losses_pt_per_uid[uid]),
