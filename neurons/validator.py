@@ -1252,6 +1252,14 @@ class Validator:
             first_seen = self.eval_state.get_model_first_seen(metadata.model_idx, metadata.hotkey, metadata.block)
             if first_seen is not None and first_seen['hotkey'] != metadata.hotkey:
                 bt.logging.info(f"UID {uid}/{metadata.hotkey} serves copy of model idx {metadata.model_idx} by {first_seen['hotkey']} @ {first_seen['block']}, ignoring")
+
+                # Mark commitments so that it is not downloaded again
+                lbl = metadata.id.format_label(full=True)
+                discard_lbl = f"{metadata.hotkey}/{lbl}"
+                if discard_lbl not in self.discarded_commitments:
+                    bt.logging.info(f"UID {uid}/{metadata.hotkey} marking as discarded")
+                    self.discarded_commitments.add(discard_lbl)
+
                 return None
             if metadata.model_idx is None:
                 bt.logging.info(f"UID {uid}/{metadata.hotkey} unable to get model index")
