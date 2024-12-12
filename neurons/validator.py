@@ -1159,10 +1159,15 @@ class Validator:
                 self.local_store.delete_model(hk, metadata.id)
 
             # Mark evaluated models with low win-rate as discarded
+            have_losses = (
+                    uid in losses_per_uid
+                    and losses_per_uid[uid] is not None
+                    and np.sum(~np.isnan(losses_per_uid[uid])) > 0
+                )
             if (uid in win_info['win_rate'] and
                     win_info['win_rate'][uid] < self.defaults['discard_winrate'] and
                     win_info['win_abs_rate'][uid] < self.defaults['discard_winrate'] and
-                    not (uid in losses_per_uid and np.sum(~np.isnan(losses_per_uid[uid])) == 0) # Should be evaluated
+                    have_losses # Here, only drop models if succesfully evaluated
                 ):
                 bt.logging.info(f"Marking model of UID {uid} as discarded due to low current and absolute win-rate")
                 lbl = metadata.id.format_label(full=True)
