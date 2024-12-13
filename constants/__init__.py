@@ -30,6 +30,9 @@ ROOT_DIR = Path(__file__).parent.parent
 
 MAX_MODEL_SIZE          = 15*1024*1024*1024
 
+# Whether to ignore model hash (for testing)
+IGNORE_MODEL_HASH       = False
+
 # The number of run steps to log to single wandb run.
 MAX_RUN_STEPS_PER_WANDB_RUN = 100
 

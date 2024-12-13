@@ -205,6 +205,10 @@ class Validator:
         if self.config.wandb.on and not self.config.offline:
             self.new_wandb_run()
 
+        if self.config.ignore_model_hash:
+            bt.logging.warning('Ignoring model hashes (for testing only!)')
+            constants.IGNORE_MODEL_HASH = True
+
         # Weights and step info
         self.weights = torch.zeros(constants.SUBNET_N_UIDS)
         self.run_step_count = 0

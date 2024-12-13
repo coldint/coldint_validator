@@ -64,20 +64,34 @@ class ModelUpdater:
         # Get the local path based on the local store to download to (top level hotkey path)
         model_available = False
         snapshot_path = utils.get_local_model_snapshot_dir(self.local_store.base_dir, hotkey, metadata.id)
+        pt_model = None
         if os.path.exists(snapshot_path):
             current_hash = utils.get_hash_of_directory(snapshot_path)
             hash_with_hotkey = get_hash_of_two_strings(current_hash, hotkey)
             if hash_with_hotkey == metadata.id.hash:
                 model_available = True
+            elif current_hash is not None and constants.IGNORE_MODEL_HASH:
+                # No hash to check, one way to find out if the model can be loaded...
+                try:
+                    with torch.device('meta'):
+                        pt_model = AutoModelForCausalLM.from_pretrained(
+                            pretrained_model_name_or_path=snapshot_path,
+                            use_safetensors=True,
+                        )
+                    model_available = True
+                except:
+                    pass
+
 
         # Otherwise we need to download the new model based on the metadata.
         if model_available:
             bt.logging.debug(f"Model {metadata.id} already available, not downloading")
-            with torch.device('meta'):
-                pt_model = AutoModelForCausalLM.from_pretrained(
-                    pretrained_model_name_or_path=snapshot_path,
-                    use_safetensors=True,
-                )
+            if pt_model is None:
+                with torch.device('meta'):
+                    pt_model = AutoModelForCausalLM.from_pretrained(
+                        pretrained_model_name_or_path=snapshot_path,
+                        use_safetensors=True,
+                    )
         else:
             model_size_limit = cparams.get('model_size', constants.MAX_MODEL_SIZE)
             statvfs = os.statvfs(self.local_store.base_dir)
@@ -110,9 +124,13 @@ class ModelUpdater:
                 )
                 return self.SYNC_RESULT_DOWNLOAD_FAILED
 
-            # Check that the hash of the downloaded content matches.
-            hash_with_hotkey = get_hash_of_two_strings(model.id.hash, hotkey)
-            if hash_with_hotkey != metadata.id.hash:
+            # If needed, check whether the hash of the downloaded content matches.
+            if model.id.hash is None:
+                bt.logging.trace(f"Sync for hotkey {hotkey} failed, model hash is None")
+                return self.SYNC_RESULT_DOWNLOAD_FAILED
+            elif model.id.hash is not None and constants.IGNORE_MODEL_HASH:
+                bt.logging.trace(f"Sync for hotkey {hotkey} succeeded; hash ignored due to config.")
+            elif get_hash_of_two_strings(model.id.hash, hotkey) != metadata.id.hash:
                 bt.logging.trace(
                     f"Sync for hotkey {hotkey} failed. Hash of hugging face content and hotkey {hash_with_hotkey} does not match chain metadata {metadata}."
                 )

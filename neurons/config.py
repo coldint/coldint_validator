@@ -58,6 +58,12 @@ def validator_config():
         type=int,
         help="Maximum size of model store (>0) or minimum space to keep free on disk (<=0) after model cleanup; please keep enough free space to download new models.",
     )
+    parser.add_argument(
+        "--ignore_model_hash",
+        default=False,
+        action='store_true',
+        help="Ignore the model hash (for testing only)",
+    )
 
     bt.subtensor.add_args(parser)
     bt.logging.add_args(parser)
