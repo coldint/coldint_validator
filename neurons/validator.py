@@ -730,7 +730,7 @@ class Validator:
         console.print(table)
 
         # always get a new subtensor instance for weight setting
-        st = btlite.get_subtensor()
+        st = btlite.get_subtensor(config=self.config)
         if st is None:
             bt.logging.error(f'Could not create subtensor, cannot set weights')
             return
