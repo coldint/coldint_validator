@@ -415,6 +415,9 @@ class Validator:
                 if mdl_metadata is not None:
                     # If commitment exists multiple times, only keep oldest one
                     mdl_metadata = ModelMetadata.parse_chain_data(mdl_metadata)
+                    if mdl_metadata is None:
+                        bt.logging.info(f'UID {miner_uid} has invalid commitment, skipping UID')
+                        continue
                     lbl = mdl_metadata.id.format_label(full=True)
                     discard_lbl = f"{hotkey}/{lbl}"
                     if lbl in commits_seen:
