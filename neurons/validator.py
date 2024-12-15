@@ -1252,6 +1252,9 @@ class Validator:
                 metadata.hotkey,
                 metadata.id
             )
+        else:
+            bt.logging.info(f'cannot get metadata for UID {uid} as len(self.metagraph.hotkeys)={len(self.metagraph.hotkeys)}')
+            return None
 
         metadata.model_idx = None
         if self.use_eval_cache:
