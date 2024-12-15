@@ -37,6 +37,10 @@ def group_samples(losses_per_uid, group_size):
         else:
             uids.append(uid)
 
+    if len(uids)==0:
+        bt.logging.info('no losses to group_samples() on')
+        return {uid:None for uid in losses_per_uid.keys()}
+
     loss_mat = np.array([
         losses_per_uid[uid] for uid in uids
     ])
