@@ -10,7 +10,7 @@ import bittensor as bt
 import constants
 
 # Needed to get proper logging between child and parent process
-from bittensor.btlogging.defines import BITTENSOR_LOGGER_NAME
+from bittensor.utils.btlogging.defines import BITTENSOR_LOGGER_NAME
 import logging as stdlogging
 from logging.handlers import QueueHandler,QueueListener
 import atexit
