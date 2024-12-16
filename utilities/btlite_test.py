@@ -60,19 +60,24 @@ def setup_wallet(uri: str):
 def start_proxy(**kwargs):
     global proxy_thread
     if 'target_websocket' in kwargs:
-        proxy_thread = threading.Thread(target=websocket_proxy_listen, kwargs=kwargs, daemon=False)
+        proxy_thread = threading.Thread(target=websocket_proxy_listen_wrap, kwargs=kwargs, daemon=False)
     else:
         proxy_thread = threading.Thread(target=tcp_proxy_listen, kwargs=kwargs, daemon=False)
     proxy_thread.start()
 
-def websocket_proxy_listen(listen_host='localhost',listen_port=0,**kwargs):
+def websocket_proxy_listen_wrap(*args,**kwargs):
+    asyncio.run(websocket_proxy_listen(*args,**kwargs))
+
+async def websocket_proxy_listen(listen_host='localhost',listen_port=0,**kwargs):
     global websocket_target
     websocket_target = kwargs['target_websocket']
-    start_server = websockets.serve(websocket_proxy_handler, listen_host, listen_port)
-    asyncio.get_event_loop().run_until_complete(start_server)
-    asyncio.get_event_loop().run_forever()
+    start_server = await websockets.serve(websocket_proxy_handler, listen_host, listen_port)
+    await start_server.wait_closed()
+    #asyncio.get_event_loop().run_until_complete(start_server)
+    #asyncio.get_event_loop().run_forever()
 
-async def websocket_proxy_handler(client_ws,client_path):
+async def websocket_proxy_handler(client_ws):#,client_path):
+    client_path = client_ws.request.path
     try:
         modify = {
                 #15:'{"jsonrpc":"2.0","error":{"code":1234,"message":"Mock error","data":"Bummer"},"id":15}',
@@ -81,6 +86,7 @@ async def websocket_proxy_handler(client_ws,client_path):
         #modify[idx] = '{"jsonrpc":"2.0","error":{"code":1010,"message":"Oh no","data":"Bad things"},"id":%d}'%idx
         stall = []
         stall.append('author_extrinsicUpdate')
+        bt.logging.warning(f"Connecting to {websocket_target}")
         async with websockets.connect(websocket_target) as server_ws:
             client_to_server = asyncio.create_task(forward_data(client_ws, server_ws, 'client'))
             server_to_client = asyncio.create_task(forward_data(server_ws, client_ws, 'server', modify=modify,stall=stall))
@@ -277,6 +283,10 @@ def test_add_args(parser):
     parser.add_argument(
         '-w', default=False, action='store_true',
         help='Do not truncate logged messages.'
+    )
+    parser.add_argument(
+        '--sleep', default=False, action='store_true',
+        help='Do not stop but sleep indefinitely (for proxy)'
     )
 
 if __name__ == '__main__':
@@ -483,7 +493,7 @@ if __name__ == '__main__':
         else:
             weights = [float(f) for f in args.set_weights.split(',')]
         uids = list(range(len(weights)))
-        bt.logging.info(f'setting weights {weights} on netuid {args.netuid} for uids {uids} with hotkey {hotkey}')
+        bt.logging.info(f'setting weights {weights} on netuid {args.netuid} for uids {uids} with hotkey {str(hotkey)}')
         vali_uid = None
         hotkey_str = hotkey.ss58_address
         for n in st.neurons_lite(args.netuid):
@@ -526,5 +536,9 @@ if __name__ == '__main__':
         except Exception as e:
             bt.logging.info(f'exception fetching pending emission: {e}, {traceback.format_exc()}')
         bt.logging.info(f'pending amount on {coldkey} = {amount}')
+
+    if args.sleep:
+        while True:
+            time.sleep(1)
 
     shutdown()
