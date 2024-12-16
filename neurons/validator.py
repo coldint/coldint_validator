@@ -741,7 +741,7 @@ class Validator:
                 subtensor=st,
                 hotkey=self.wallet.hotkey,
                 uids=self.metagraph.uids,
-                netuid=constants.SUBNET_UID,
+                netuid=self.config.netuid,
                 weights=self.weights[:len(self.metagraph.uids)],
                 wait_for_inclusion=True,
                 version_key=constants.weights_version_key,
