@@ -737,9 +737,9 @@ class Validator:
 
         try:
             bt.logging.info(f"Setting weights.")
-            call = btlite.set_weights_retry(
+            call = btlite.set_weights_retry_btlib(
                 subtensor=st,
-                hotkey=self.wallet.hotkey,
+                wallet=self.wallet,
                 uids=self.metagraph.uids,
                 netuid=self.config.netuid,
                 weights=self.weights[:len(self.metagraph.uids)],
