@@ -487,6 +487,7 @@ class Validator:
 
         # Fetch top miners according to other validators
         top_miner_uids = set(utils.list_top_miners(new_metagraph))
+        bt.logging.info(f"Retrieved top UIDs: {top_miner_uids}")
 
         # Retrieve deduplicated commitment metadata
         new_metadata, uid_block = self.retrieve_metadata(new_metagraph, top_miner_uids=top_miner_uids)
@@ -525,7 +526,7 @@ class Validator:
 
         # Visit new top miners
         new_top_uids = top_miner_uids - active_uids
-        bt.logging.debug(f"Visiting top UIDs: {new_top_uids}")
+        bt.logging.debug(f"Visiting new top UIDs: {new_top_uids}")
         n_top_updated = self.visit_uids(
                 new_metagraph,
                 new_metadata,
