@@ -186,3 +186,48 @@ async def set_weights_retry(subtensor=None, hotkey=None, uids=[], weights=[], ne
                 bt.logging.warning(f"set_weights failed ({i_try+1}/{retries}): {type(e).__name__} {e}, {traceback.format_exc()}")
         i_try += 1
     return False, f"set_weights failed {i_try} times"
+
+async def set_weights_retry_btlib(subtensor=None, wallet=None, uids=[], weights=[], netuid=0, version_key=0xff, wait_for_inclusion=False, wait_for_finalization=False, retries=3, await_block=True, fake_call=False):
+    '''
+    Retry weight setting <retries> times.
+    '''
+    i_try = 0
+    timeout = time.time()+retries*20
+    while i_try < retries:
+        try:
+            block = subtensor.block
+            if i_try != 0 and await_block:
+                # On first attempt, just try, but later aim for start of next block.
+                bt.logging.debug(f'Awaiting block {block+1} for attempt {i_try+1}/{retries}')
+                while block == subtensor.block and time.time()<timeout:
+                    await asyncio.sleep(0.1)
+                block = subtensor.block
+            bt.logging.warning(f'Setting weights, attempt {i_try+1}/{retries}, block={block}...')
+
+            ret, msg = subtensor.set_weights(
+                wallet=wallet, netuid=netuid, version_key=version_key,
+                uids=uids, weights=weights,
+                wait_for_inclusion=wait_for_inclusion, wait_for_finalization=wait_for_finalization,
+                max_retries=1,  # library only performs retries if CR3 not enabled
+            )
+            if ret is True:
+                return ret, msg
+            bt.logging.warning(f'set_weights failed: {msg}')
+        except Exception as e:
+            if ( isinstance(e,substrateinterface.exceptions.SubstrateRequestException)
+                 and isinstance(e.args,tuple)
+                 and len(e.args)>0
+                 and isinstance(e.args[0],dict)
+                ):
+                code = e.args[0].get('code',-1)
+                message = e.args[0].get('message',-1)
+                data = e.args[0].get('data',-1)
+                bt.logging.warning(f'RPC exception setting weights ({i_try+1}/{retries}): code={code}, message="{message}", data="{data}"')
+                if code == 1010:
+                    bt.logging.warning(f'Is the hotkey registered in the subnet, with enough stake?')
+                elif code == 1014:
+                    bt.logging.warning(f"An extrinsic is already in this block{', waiting for the next block' if await_block else ''}")
+            else:
+                bt.logging.warning(f"set_weights failed ({i_try+1}/{retries}): {type(e).__name__} {e}, {traceback.format_exc()}")
+        i_try += 1
+    return False, f"set_weights failed {i_try} times"
