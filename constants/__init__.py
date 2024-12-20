@@ -5,10 +5,10 @@ from pathlib import Path
 # ---------------------------------
 
 # Release
-__version__ = "1.0.11"
+__version__ = "1.0.12"
 
 # Validator schema version
-__validator_version__ = "1.0.11"
+__validator_version__ = "1.0.12"
 version_split = __validator_version__.split(".")
 __spec_version__ = (
     (1000 * int(version_split[0]))
