@@ -86,15 +86,22 @@ class SubsetFineWebEdu2Loader(IterableDataset):
             )
             
             try:
+                response = None
+                response_json = "No response"
                 response = requests.get(self.rows_base_url, params=params)
                 try:
                     response_json = response.json()
                 except:
-                    response_json = "Invalid JSON"
+                    bt.logging.warning("Invalid JSON received, not retrying")
+                    return False
                 response.raise_for_status()  # This will raise an HTTPError if the HTTP request returned an unsuccessful status code
 
+                if type(response_json) is not dict or 'rows' not in response_json:
+                    bt.logging.warning("Invalid JSON received, not retrying")
+                    return False
+
                 # Note that we enforce the number of rows per page locally.
-                for row in response.json()["rows"][:self.num_rows_per_page]:
+                for row in response_json["rows"][:self.num_rows_per_page]:
                     content = row["row"]["text"]
                     if tokenize:
                         tokenized = self.tokenizer(content, truncation=True)["input_ids"] + [self.tokenizer.eos_token_id]
@@ -110,7 +117,7 @@ class SubsetFineWebEdu2Loader(IterableDataset):
                 return True
             
             except requests.exceptions.RequestException as e:
-                if response.status_code == 500:
+                if response is not None and response.status_code == 500:
                     # Internal Server Errors are seen regularly (2024-07-21) for particular pages.
                     # Retry does not help, so don't bother, and don't complain loudly.
                     bt.logging.warning(f"skipping page: {e}")
