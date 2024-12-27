@@ -49,12 +49,12 @@ class ChainModelMetadataStore(ModelMetadataStore):
         if backgrounded:
             # Wrap calls to the subtensor in a subprocess with a timeout to handle potential hangs.
             partial = functools.partial(
-                bt.extrinsics.serving.get_metadata, self.subtensor, self.subnet_uid, hotkey
+                bt.core.extrinsics.serving.get_metadata, self.subtensor, self.subnet_uid, hotkey
             )
 
             metadata = utils.run_in_subprocess(partial, 180)
         else:
-            metadata = bt.extrinsics.serving.get_metadata(self.subtensor, self.subnet_uid, hotkey)
+            metadata = bt.core.extrinsics.serving.get_metadata(self.subtensor, self.subnet_uid, hotkey)
 
         if not metadata:
             return None
