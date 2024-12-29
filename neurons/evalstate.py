@@ -243,6 +243,7 @@ class EvalState(object):
             batch_size=1,
             num_pages=0,
             tokenizer=None,
+            need_config=False,
             pack=False
         )
         samples = self.sampleset['samples']

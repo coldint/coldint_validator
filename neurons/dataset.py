@@ -45,6 +45,7 @@ class SubsetFineWebEdu2Loader(IterableDataset):
         num_rows_per_page=100,
         tokenizer: AutoTokenizer=None,
         pack=True,
+        need_config=True,
     ):
         self.batch_size = batch_size
         self.sequence_length = sequence_length
@@ -53,7 +54,9 @@ class SubsetFineWebEdu2Loader(IterableDataset):
         self.pack = pack
 
         # Get the dataset configs and their row sizes
-        self.configs_data = self.fetch_dataset_configs()
+        self.configs_data = {}
+        if need_config:
+            self.configs_data = self.fetch_dataset_configs()
 
         self.pages = []
         self.buffer = []
