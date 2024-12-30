@@ -8,6 +8,7 @@ import random
 import bittensor as bt
 from model.storage.disk import utils as disk_utils
 import time
+import requests
 
 class EvalState(object):
     '''
