@@ -142,9 +142,15 @@ class EvalState(object):
             return
 
         new_samples = []
-        while len(new_samples) < n_samples:
+        i_try = 0
+        max_tries = max(3, 2*n_samples//pagesize)
+        while len(new_samples) < n_samples and i_try < max_tries:
+            i_try += 1
             dataloader.buffer = []
-            dataloader.fetch_data_to_rows(1)
+            dataloader.fetch_data_to_rows(1, max_retries=1)
+            if len(dataloader.buffer) == 0:
+                bt.logging.info("No data rows returned, sleeping 1s")
+                time.sleep(1)
             for i_s, s in enumerate(dataloader.buffer):
                 new_samples.append(dict(page=dataloader.pages[0], ofs=i_s, sample=s))
 
