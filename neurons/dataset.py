@@ -168,13 +168,17 @@ class SubsetFineWebEdu2Loader(IterableDataset):
             page_info = self.get_random_pages(num_pages=1)[0]
             self.fetch_page(page_info)
 
-    def fetch_data_to_rows(self, num_pages):
+    def fetch_data_to_rows(self, num_pages, max_retries=None):
         '''
         Clear self.buffer/self.pages and fill with num_pages randomly selected pages
         '''
         self.pages = []
         self.buffer = []
-        while len(self.pages) < num_pages:
+        if max_retries is None:
+            max_retries = 2 * num_pages
+        i_try = 0
+        while len(self.pages) < num_pages and i_try < max_retries:
+            i_try += 1
             page = self.get_random_pages(num_pages=1)[0]
             self.fetch_page(page, pack=False, tokenize=False)
         return self.buffer
