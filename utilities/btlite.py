@@ -23,9 +23,6 @@ def get_subtensor(*args, retries=3, no_check=False, **kwargs):
             if no_check:
                 return st
             st.substrate.init_runtime()
-            # By way of post-init set a timeout on the substrate websocket, to
-            # prevent infinite waiting if the chain dies.
-            st.substrate.websocket.socket.settimeout(WEBSOCKET_TIMEOUT)
             if st.substrate.metadata is None:
                 # We should probably not reach this even in light of the described bug.
                 bt.logging.warning(f'Substrate init failed silently; substrate.metadata=None. Retrying...')
@@ -44,14 +41,12 @@ def check_reconnect(exception=None,subtensor=None):
     bt.logging.warning('substrate websocket timed out; closing and re-opening')
     try:
         subtensor.substrate.close()
-        subtensor.substrate.connect_websocket()
-        subtensor.substrate.websocket.socket.settimeout(WEBSOCKET_TIMEOUT)
+        subtensor.substrate.connect()
     except Exception as e:
         bt.logging.error(f'failed to reconnect websocket: {type(e).__name__} {e}')
 
 def get_metagraph(subtensor=None, netuid=0, lite=False, reconnect=True):
     try:
-        subtensor.substrate.websocket.socket.settimeout(WEBSOCKET_TIMEOUT)
         return subtensor.metagraph(netuid=netuid,lite=lite)
     except Exception as e:
         if reconnect:
@@ -61,7 +56,6 @@ def get_metagraph(subtensor=None, netuid=0, lite=False, reconnect=True):
 
 def get_metadata(subtensor=None, netuid=0, hotkey=None, reconnect=True):
     try:
-        subtensor.substrate.websocket.socket.settimeout(WEBSOCKET_TIMEOUT)
         commit_data = subtensor.substrate.query(
             module="Commitments",
             storage_function="CommitmentOf",
@@ -123,7 +117,6 @@ def set_weights(st, hotkey, uids, weights, netuid, version_key, wait_for_inclusi
         era={"period": 5},
     )
     bt.logging.trace('calling submit_extrinsic()')
-    st.substrate.websocket.socket.settimeout(WEBSOCKET_TIMEOUT)
     try:
         response = st.substrate.submit_extrinsic(
             extrinsic,
