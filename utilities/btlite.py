@@ -62,7 +62,7 @@ def get_metadata(subtensor=None, netuid=0, hotkey=None, reconnect=True):
             params=[netuid, hotkey],
             block_hash=None,
         )
-        return commit_data.value
+        return commit_data
     except Exception as e:
         if reconnect:
             check_reconnect(exception=e,subtensor=subtensor)

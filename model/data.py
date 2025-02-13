@@ -111,9 +111,9 @@ class ModelMetadata(BaseModel):
         hex_data = None
         chain_str = None
         try:
-            commitment = metadata["info"]["fields"][0]
-            hex_data = commitment[list(commitment.keys())[0]][2:]
-            chain_str = bytes.fromhex(hex_data).decode()
+            commitment = metadata["info"]["fields"][0][0]
+            raw_data = commitment[list(commitment.keys())[0]]
+            chain_str = bytes(raw_data[0]).decode()
             model_id = ModelId.from_compressed_str(chain_str)
         except:
             # If the metadata format is not correct on the chain then we return None.
