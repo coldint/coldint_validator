@@ -343,7 +343,7 @@ class Validator:
             now = time.time()
             time_spent = now - start_ts
             if ttl is not None and time_spent > ttl:
-                bt.logging.info(f"visit_uids() ttl expired after visiting {n_picked} models, spent {time_spent:.01f}sec")
+                bt.logging.info(f"visit_uids() ttl of {ttl:.01f}sec expired after visiting {n_picked} models, spent {time_spent:.01f}sec")
                 return n_picked
 
             if uid >= len(metagraph.hotkeys):
@@ -507,9 +507,6 @@ class Validator:
 
         bt.logging.info(f"Synced metadata; {len(new_metadata)} commitments")
 
-        download_start_ts = time.time()
-        download_ttl_ts = download_start_ts + constants.TTL_DOWNLOAD_MODELS
-
         # 3-step strategy:
         # 1. Pick top miners every TOP_MODEL_RETRY_INTERVAL
         # 2. Pick new models
@@ -524,7 +521,7 @@ class Validator:
             hotkey_metadata = new_metadata.get(hotkey, None)
             self.hk_metadata[hotkey] = hotkey_metadata
 
-        # Visit new top miners
+        # Visit new top miners, use ttl TTL_DOWNLOAD_MODELS
         new_top_uids = top_miner_uids - active_uids
         bt.logging.debug(f"Visiting new top UIDs: {new_top_uids}")
         n_top_updated = self.visit_uids(
@@ -533,7 +530,7 @@ class Validator:
                 new_top_uids,
                 prio=PRIO_TOP_MODEL,
                 retry_interval=constants.TOP_MODEL_RETRY_INTERVAL,
-                ttl=download_ttl_ts-time.time(),
+                ttl=constants.TTL_DOWNLOAD_MODELS,
         )
 
         n_uids = len(new_metagraph.hotkeys)
@@ -542,6 +539,8 @@ class Validator:
 
         non_active_uids = set(all_uids) - active_uids - new_top_uids
         bt.logging.debug(f"Visiting UIDs for new models")
+        # Use constants.TTL_DOWNLOAD_MODELS for the new models plus retry-models
+        download_ttl_ts = time.time() + constants.TTL_DOWNLOAD_MODELS
         n_new_models = self.visit_uids(
                 new_metagraph,
                 new_metadata,
