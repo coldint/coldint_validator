@@ -42,7 +42,7 @@ HOF_URL                 = "https://github.com/coldint/sn29/raw/main/hall_of_fame
 COMPETITIONS_URL        = "https://github.com/coldint/sn29/raw/main/competitions.json"
 
 # Maximum fraction of (miner) emissions for rewards
-REWARDS_MAX_FRACTION    = 0.4
+REWARDS_MAX_FRACTION    = 1.0
 
 # Bounty decay factor, per epoch
 REWARDS_DECAY_FACTOR    = 0.995
