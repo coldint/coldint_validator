@@ -852,7 +852,9 @@ class Validator:
                 for uid in self.get_all_active_uids()
         }
         uid_to_matrix_idx = {}
-        if self.use_eval_cache:
+        if len(self.competitions) == 0:
+            pass
+        elif self.use_eval_cache:
             uid_to_matrix_idx = {
                 uid: self.eval_state.get_model_idx(meta.path)
                     if (meta is not None and meta.path is not None) else None
