@@ -649,7 +649,7 @@ class Validator:
                 bt.logging.error(f"Failed to update dynamic config: {e} \n {traceback.format_exc()}")
 
             try:
-                self.update_chain()
+                pass #self.update_chain()
             except Exception as e:
                 bt.logging.error(f"Failed to update chain data: {e} \n {traceback.format_exc()}")
 
@@ -884,19 +884,19 @@ class Validator:
             samples = dataloader.fetch_data_to_rows(self.defaults['eval_samples'] // self.defaults['rows_per_page'])
 
         n_models_evaluated = 0
-        t_per_competition = constants.TTL_RUN_STEP/len(self.competitions)
+        t_per_competition = constants.TTL_RUN_STEP/len(self.competitions) if len(self.competitions) else 0
         for cname in self.competitions:
             ts_expire = time.time() + t_per_competition
             n_models_evaluated += self.run_step_for_competition(cname, dataloader, ts_expire=ts_expire)
 
-        if n_models_evaluated == 0:
-            bt.logging.debug("No uids to eval. Waiting 2 minutes to download some models.")
-            await asyncio.sleep(120)
-            return
-
         self.update_weights()
 
         self.save_state()
+
+        if n_models_evaluated == 0:
+            bt.logging.debug("No uids to eval. Waiting 5 minutes to download some models.")
+            await asyncio.sleep(5*60)
+            return
 
         # Log to screen and wandb.
         pages_desc = [f'{cfg_name}_{num_rows}_{split}' for cfg_name, num_rows, split in dataloader.pages]
